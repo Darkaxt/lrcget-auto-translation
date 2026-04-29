@@ -3,7 +3,10 @@ use crate::persistent_entities::{
     PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack,
 };
 use crate::scanner::models::DbTrack;
-use crate::translation::{LyricTranslation, LyricTranslationUpsert};
+use crate::translation::{
+    LyricTranslation, LyricTranslationUpsert, TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE,
+    TRANSLATION_STATUS_SUCCEEDED,
+};
 use crate::utils::prepare_input;
 use anyhow::Result;
 use include_dir::{include_dir, Dir};
@@ -389,7 +392,7 @@ pub fn get_current_lyric_translation(
               AND provider_model = ?
               AND target_language = ?
               AND settings_hash = ?
-              AND status = 'succeeded'
+              AND status IN ('succeeded', 'skipped_same_language')
             LIMIT 1
         "},
         (
@@ -439,7 +442,8 @@ pub fn get_track_translation_status(track_id: i64, db: &Connection) -> Result<St
         .optional()?;
 
     Ok(match status.as_deref() {
-        Some("succeeded") => "translated".to_string(),
+        Some(TRANSLATION_STATUS_SUCCEEDED) => "translated".to_string(),
+        Some(TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE) => "already_target_language".to_string(),
         Some("pending") => "pending".to_string(),
         Some("failed") => "failed".to_string(),
         Some(_) => "none".to_string(),
@@ -547,6 +551,7 @@ pub fn get_track_by_id(id: i64, db: &Connection) -> Result<PersistentTrack> {
       COALESCE((
         SELECT CASE status
           WHEN 'succeeded' THEN 'translated'
+          WHEN 'skipped_same_language' THEN 'already_target_language'
           WHEN 'pending' THEN 'pending'
           WHEN 'failed' THEN 'failed'
           ELSE 'none'
@@ -555,7 +560,14 @@ pub fn get_track_by_id(id: i64, db: &Connection) -> Result<PersistentTrack> {
         WHERE lyric_translations.track_id = tracks.id
         ORDER BY updated_at DESC, id DESC
         LIMIT 1
-      ), 'none') AS translation_status
+      ), 'none') AS translation_status,
+      (
+        SELECT target_language
+        FROM lyric_translations
+        WHERE lyric_translations.track_id = tracks.id
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+      ) AS translation_target_language
     FROM tracks
     JOIN albums ON tracks.album_id = albums.id
     JOIN artists ON tracks.artist_id = artists.id
@@ -587,6 +599,7 @@ pub fn get_track_by_id(id: i64, db: &Connection) -> Result<PersistentTrack> {
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
             translation_status: row.get("translation_status")?,
+            translation_target_language: row.get("translation_target_language")?,
         })
     })?;
     Ok(row)
@@ -912,6 +925,7 @@ pub fn get_tracks(db: &Connection) -> Result<Vec<PersistentTrack>> {
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
             translation_status: "none".to_string(),
+            translation_target_language: None,
         };
 
         tracks.push(track);
@@ -1224,6 +1238,7 @@ pub fn get_album_tracks(album_id: i64, db: &Connection) -> Result<Vec<Persistent
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
             translation_status: "none".to_string(),
+            translation_target_language: None,
         };
 
         tracks.push(track);
@@ -1307,6 +1322,7 @@ pub fn get_artist_tracks(artist_id: i64, db: &Connection) -> Result<Vec<Persiste
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
             translation_status: "none".to_string(),
+            translation_target_language: None,
         };
 
         tracks.push(track);
@@ -1658,6 +1674,27 @@ pub fn get_track_ids_with_lyrics(db: &Connection) -> Result<Vec<i64>> {
     Ok(track_ids)
 }
 
+/// Get track IDs with stored synced lyrics that can be translated from the local database.
+pub fn get_track_ids_with_synced_lyrics(db: &Connection) -> Result<Vec<i64>> {
+    let mut statement = db.prepare(indoc! {"
+      SELECT tracks.id
+      FROM tracks
+      JOIN lyricsfiles ON lyricsfiles.track_id = tracks.id
+      WHERE lyricsfiles.has_synced_lyrics = 1
+        AND lyricsfiles.instrumental = 0
+      ORDER BY tracks.artist_id ASC, tracks.album_id ASC, tracks.track_number ASC NULLS LAST
+    "})?;
+
+    let mut rows = statement.query([])?;
+    let mut track_ids: Vec<i64> = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        track_ids.push(row.get("id")?);
+    }
+
+    Ok(track_ids)
+}
+
 /// Find orphaned lyricsfiles by track metadata (for reattachment during scan)
 /// Returns the lyricsfile_id if found, None otherwise
 /// Matches on normalized title, artist, album, and duration within ±2 seconds
@@ -1799,6 +1836,7 @@ pub fn find_tracks_by_metadata(
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
             translation_status: "none".to_string(),
+            translation_target_language: None,
         };
 
         tracks.push(track);
@@ -1914,6 +1952,40 @@ mod translation_db_tests {
 
         upsert_lyric_translation(&successful_translation("source-a"), &db).unwrap();
         assert_eq!(get_track_translation_status(42, &db).unwrap(), "translated");
+    }
+
+    #[test]
+    fn treats_same_language_skip_as_current_usable_translation() {
+        let db = setup_db();
+        let mut skipped = successful_translation("source-a");
+        skipped.status = "skipped_same_language".to_string();
+        skipped.translated_lines_json = None;
+        skipped.translated_lrc = None;
+        skipped.error_message = Some("Source lyrics are already English".to_string());
+        skipped.provider_metadata_json = Some(
+            r#"{"skipReason":"source_language_matches_target","detectedLanguage":"English","detectedLanguageCode":"en","targetLanguage":"English","targetLanguageCode":"en","confidence":0.99}"#
+                .to_string(),
+        );
+
+        upsert_lyric_translation(&skipped, &db).unwrap();
+
+        let found = get_current_lyric_translation(
+            7,
+            "source-a",
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(found.status, "skipped_same_language");
+        assert_eq!(
+            get_track_translation_status(42, &db).unwrap(),
+            "already_target_language"
+        );
     }
 
     #[test]

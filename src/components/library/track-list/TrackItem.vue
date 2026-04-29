@@ -81,6 +81,11 @@
           class="text-red-100 font-bold text-[0.67rem] bg-red-800 rounded px-1 py-0.5"
           >Failed</span
         >
+        <span
+          v-else-if="translationStatus === 'already_target_language'"
+          class="text-cyan-100 font-bold text-[0.67rem] bg-cyan-800 rounded px-1 py-0.5"
+          >{{ alreadyTargetLanguageLabel }}</span
+        >
       </div>
     </div>
 
@@ -135,8 +140,10 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePlayer } from '@/composables/player.js'
+import { useToast } from 'vue-toastification'
 
 const { playTrack, playingTrack, status, pause, resume } = usePlayer()
+const toast = useToast()
 
 const { searchLyrics } = useSearchLyrics()
 const { editLyricsV2, editingAudioSource } = useEditLyricsV2()
@@ -172,6 +179,11 @@ const translationStatus = computed(() => {
   return track.value?.translation_status || 'none'
 })
 
+const alreadyTargetLanguageLabel = computed(() => {
+  const targetLanguage = track.value?.translation_target_language || 'target'
+  return `Already ${targetLanguage}`
+})
+
 const translateLyrics = async track => {
   if (!track || isTranslating.value) {
     return
@@ -179,10 +191,16 @@ const translateLyrics = async track => {
 
   isTranslating.value = true
   try {
-    await invoke('translate_track_lyrics', { trackId: track.id })
+    const result = await invoke('translate_track_lyrics', { trackId: track.id })
+    if (result.status === 'skipped_same_language') {
+      toast.info(result.error_message || 'Source lyrics are already in the target language')
+    } else {
+      toast.success('Lyrics translated')
+    }
     track.value = await invoke('get_track', { trackId: props.trackId })
   } catch (error) {
     console.error('Failed to translate lyrics:', error)
+    toast.error(`Failed to translate lyrics: ${error}`)
     track.value = await invoke('get_track', { trackId: props.trackId })
   } finally {
     isTranslating.value = false

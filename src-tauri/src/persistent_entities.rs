@@ -20,6 +20,7 @@ pub struct PlayableTrack {
     pub lyricsfile: Option<String>,
     pub lyricsfile_id: Option<i64>, // ID from lyricsfiles table
     pub translation_status: String,
+    pub translation_target_language: Option<String>,
 }
 
 impl From<PersistentTrack> for PlayableTrack {
@@ -39,6 +40,7 @@ impl From<PersistentTrack> for PlayableTrack {
             lyricsfile: track.lyricsfile,
             lyricsfile_id: track.lyricsfile_id,
             translation_status: track.translation_status,
+            translation_target_language: track.translation_target_language,
         }
     }
 }
@@ -63,6 +65,7 @@ pub struct PersistentTrack {
     pub duration: f64,
     pub instrumental: bool,
     pub translation_status: String,
+    pub translation_target_language: Option<String>,
 }
 
 #[derive(Serialize)]

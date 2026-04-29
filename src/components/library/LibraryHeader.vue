@@ -103,6 +103,38 @@
       </button>
 
       <button
+        v-if="isTranslating && processedTranslationCount < translationTotalCount"
+        class="button button-working h-full min-w-[9rem] px-3 py-1.5 text-xs rounded-full"
+        title="Translating stored lyrics"
+      >
+        <div class="animate-spin text-sm">
+          <Loading />
+        </div>
+        <span>{{ processedTranslationCount }}/{{ translationTotalCount }}</span>
+      </button>
+
+      <button
+        v-else-if="isTranslating"
+        class="button button-done h-full min-w-[9rem] px-3 py-1.5 text-xs rounded-full"
+        title="Stored lyric translation complete"
+        @click.prevent="startTranslationOver"
+      >
+        <div class="text-sm">
+          <Check />
+        </div>
+        <span>{{ processedTranslationCount }}/{{ translationTotalCount }}</span>
+      </button>
+
+      <button
+        v-else
+        class="button button-normal h-full aspect-square rounded-full"
+        title="Translate stored lyrics"
+        @click.prevent="translateExistingLyrics"
+      >
+        <Translate />
+      </button>
+
+      <button
         v-if="isExporting && (exportedCount + skippedCount + errorCount) < exportTotalCount"
         class="button button-working h-full aspect-square rounded-full"
         @click.prevent="$emit('showExportViewer')"
@@ -232,11 +264,14 @@ import DotsVertical from '~icons/mdi/dots-vertical'
 import Refresh from '~icons/mdi/refresh'
 import FolderMultiple from '~icons/mdi/folder-multiple'
 import Export from '~icons/mdi/export'
+import Translate from '~icons/mdi/translate'
 import CheckboxButton from '@/components/common/CheckboxButton.vue'
 import { useDownloader } from '@/composables/downloader.js'
 import { useExporter } from '@/composables/export.js'
+import { useTranslator } from '@/composables/translator.js'
 import MiniSearch from './MiniSearch.vue'
 import { invoke } from '@tauri-apps/api/core'
+import { useToast } from 'vue-toastification'
 
 const props = defineProps(['activeTab'])
 const emit = defineEmits([
@@ -254,6 +289,7 @@ const exportPlainText = ref(false)
 const exportSyncedLrc = ref(false)
 const embedIntoTrack = ref(false)
 const tryEmbedLyrics = ref(false)
+const toast = useToast()
 
 const refreshEmbedConfig = async () => {
   const config = await invoke('get_config')
@@ -281,6 +317,13 @@ const handleExportClick = () => {
 const { isDownloading, totalCount: downloadTotalCount, downloadedCount, addToQueue } = useDownloader()
 
 const { isExporting, exportedCount, skippedCount, errorCount, totalCount: exportTotalCount } = useExporter()
+const {
+  isTranslating,
+  processedCount: processedTranslationCount,
+  totalCount: translationTotalCount,
+  addToQueue: addToTranslationQueue,
+  startOver: startTranslationOver,
+} = useTranslator()
 
 const isBuildingQueue = ref(false)
 
@@ -303,6 +346,23 @@ const downloadAllLyrics = async () => {
     console.error(error)
   } finally {
     isBuildingQueue.value = false
+  }
+}
+
+const translateExistingLyrics = async () => {
+  try {
+    const trackIds = await invoke('get_track_ids_requiring_translation')
+
+    if (trackIds.length === 0) {
+      toast.info('No stored synced lyrics need translation')
+      return
+    }
+
+    addToTranslationQueue(trackIds)
+    toast.info(`Queued ${trackIds.length} stored lyrics for translation`)
+  } catch (error) {
+    console.error(error)
+    toast.error(`Failed to queue stored lyrics for translation: ${error}`)
   }
 }
 </script>

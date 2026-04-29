@@ -9,6 +9,15 @@ pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
 pub const DEFAULT_TRANSLATION_PROVIDER: &str = "gemini";
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-flash-latest";
 pub const DEFAULT_TRANSLATION_EXPORT_MODE: &str = "original";
+pub const TRANSLATION_STATUS_SUCCEEDED: &str = "succeeded";
+pub const TRANSLATION_STATUS_PENDING: &str = "pending";
+pub const TRANSLATION_STATUS_FAILED: &str = "failed";
+pub const TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE: &str = "skipped_same_language";
+pub const SAME_LANGUAGE_SKIP_CONFIDENCE: f64 = 0.85;
+const MIN_LANGUAGE_DETECTION_CHARS: usize = 40;
+const CHUNK_LANGUAGE_DETECTION_CHARS: usize = 80;
+const CHUNK_LANGUAGE_DETECTION_CONFIDENCE: f64 = 0.70;
+const LATIN_TARGET_NON_LATIN_CONFLICT_RATIO: f64 = 0.05;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +79,25 @@ struct SourceLine {
     text: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ScriptCounts {
+    latin: usize,
+    hangul: usize,
+    kana: usize,
+    cjk: usize,
+    other_alpha: usize,
+}
+
+impl ScriptCounts {
+    fn total_alpha(&self) -> usize {
+        self.latin + self.hangul + self.kana + self.cjk + self.other_alpha
+    }
+
+    fn non_latin(&self) -> usize {
+        self.hangul + self.kana + self.cjk + self.other_alpha
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TranslationRequest {
     pub title: String,
@@ -78,6 +106,16 @@ pub struct TranslationRequest {
     pub source_language: Option<String>,
     pub target_language: String,
     pub source_lrc: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SameLanguageSkipDecision {
+    pub detected_language: String,
+    pub detected_language_code: String,
+    pub target_language: String,
+    pub target_language_code: String,
+    pub confidence: f64,
+    pub reason: String,
 }
 
 pub fn lyrics_source_hash(lyricsfile: &str) -> String {
@@ -231,6 +269,68 @@ pub fn build_translated_lrc(
     }
 
     Ok(output.join("\n"))
+}
+
+pub fn build_export_lrc_for_translation_status(
+    source_lrc: &str,
+    translation_status: &str,
+    translations_json: Option<&str>,
+    mode: TranslationExportMode,
+) -> Result<String> {
+    if mode == TranslationExportMode::Original
+        || translation_status == TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE
+    {
+        return Ok(source_lrc.replace("\r\n", "\n").trim_end().to_string());
+    }
+
+    let translations_json = translations_json
+        .ok_or_else(|| anyhow!("current translation row has no translated line payload"))?;
+    build_translated_lrc(source_lrc, translations_json, mode)
+}
+
+pub fn same_language_skip_decision(
+    source_lrc: &str,
+    target_language: &str,
+) -> Result<Option<SameLanguageSkipDecision>> {
+    let detection_text = source_texts_from_lrc(source_lrc)
+        .into_iter()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let signal_chars = alphabetic_char_count(&detection_text);
+
+    if signal_chars < MIN_LANGUAGE_DETECTION_CHARS {
+        return Ok(None);
+    }
+
+    let Some(info) = whatlang::detect(&detection_text) else {
+        return Ok(None);
+    };
+
+    let detected_language_code = normalize_detected_language_code(info.lang().code());
+    let target_language_code = target_language_code(target_language, false);
+    let confidence = info.confidence();
+    let script_counts = script_counts(&detection_text);
+    let has_language_conflict = has_script_conflict(&script_counts, &target_language_code)
+        || has_reliable_non_target_chunk(&detection_text, &target_language_code);
+
+    if detected_language_code == target_language_code
+        && confidence >= SAME_LANGUAGE_SKIP_CONFIDENCE
+        && info.is_reliable()
+        && !has_language_conflict
+    {
+        return Ok(Some(SameLanguageSkipDecision {
+            detected_language: info.lang().eng_name().to_string(),
+            detected_language_code,
+            target_language: target_language_label(target_language).to_string(),
+            target_language_code,
+            confidence,
+            reason: "source_language_matches_target".to_string(),
+        }));
+    }
+
+    Ok(None)
 }
 
 pub fn structured_json_from_gemini_response(raw_response: &str) -> Result<String> {
@@ -540,10 +640,93 @@ fn translation_response_schema(line_count: usize) -> serde_json::Value {
 }
 
 fn source_texts(request: &TranslationRequest) -> Vec<String> {
-    parse_source_lines(&request.source_lrc)
+    source_texts_from_lrc(&request.source_lrc)
+}
+
+fn source_texts_from_lrc(source_lrc: &str) -> Vec<String> {
+    parse_source_lines(source_lrc)
         .into_iter()
         .map(|line| line.text)
         .collect()
+}
+
+fn has_reliable_non_target_chunk(text: &str, target_language_code: &str) -> bool {
+    language_detection_chunks(text)
+        .into_iter()
+        .filter_map(|chunk| whatlang::detect(&chunk))
+        .any(|info| {
+            normalize_detected_language_code(info.lang().code()) != target_language_code
+                && info.confidence() >= CHUNK_LANGUAGE_DETECTION_CONFIDENCE
+                && info.is_reliable()
+        })
+}
+
+fn language_detection_chunks(text: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+
+        if alphabetic_char_count(&current) >= CHUNK_LANGUAGE_DETECTION_CHARS {
+            chunks.push(std::mem::take(&mut current));
+        }
+    }
+
+    if alphabetic_char_count(&current) >= CHUNK_LANGUAGE_DETECTION_CHARS {
+        chunks.push(current);
+    }
+
+    chunks
+}
+
+fn alphabetic_char_count(value: &str) -> usize {
+    value.chars().filter(|ch| ch.is_alphabetic()).count()
+}
+
+fn script_counts(value: &str) -> ScriptCounts {
+    let mut counts = ScriptCounts::default();
+
+    for ch in value.chars().filter(|ch| ch.is_alphabetic()) {
+        let codepoint = ch as u32;
+
+        if ch.is_ascii_alphabetic() || (0x00C0..=0x024F).contains(&codepoint) {
+            counts.latin += 1;
+        } else if (0xAC00..=0xD7AF).contains(&codepoint)
+            || (0x1100..=0x11FF).contains(&codepoint)
+            || (0x3130..=0x318F).contains(&codepoint)
+        {
+            counts.hangul += 1;
+        } else if (0x3040..=0x30FF).contains(&codepoint) {
+            counts.kana += 1;
+        } else if (0x4E00..=0x9FFF).contains(&codepoint) {
+            counts.cjk += 1;
+        } else {
+            counts.other_alpha += 1;
+        }
+    }
+
+    counts
+}
+
+fn has_script_conflict(counts: &ScriptCounts, target_language_code: &str) -> bool {
+    let total = counts.total_alpha();
+    if total == 0 {
+        return false;
+    }
+
+    match target_language_code {
+        "en" | "de" | "es" | "fr" | "pt" | "it" => {
+            counts.non_latin() as f64 / total as f64 >= LATIN_TARGET_NON_LATIN_CONFLICT_RATIO
+        }
+        "ko" => counts.hangul == 0 && counts.latin > counts.non_latin(),
+        "ja" => counts.kana + counts.cjk == 0 && counts.latin > counts.non_latin(),
+        "zh" => counts.cjk == 0 && counts.latin > counts.non_latin(),
+        _ => false,
+    }
 }
 
 fn require_config_value(value: &str, label: &str) -> Result<String> {
@@ -586,6 +769,32 @@ fn target_language_code(target_language: &str, uppercase: bool) -> String {
     } else {
         code.to_string()
     }
+}
+
+fn target_language_label(target_language: &str) -> &str {
+    let trimmed = target_language.trim();
+    if trimmed.is_empty() {
+        DEFAULT_TARGET_LANGUAGE
+    } else {
+        trimmed
+    }
+}
+
+fn normalize_detected_language_code(code: &str) -> String {
+    match code {
+        "eng" => "en",
+        "deu" => "de",
+        "spa" => "es",
+        "fra" => "fr",
+        "por" => "pt",
+        "ita" => "it",
+        "jpn" => "ja",
+        "kor" => "ko",
+        "cmn" => "zh",
+        "rus" => "ru",
+        value => value,
+    }
+    .to_string()
 }
 
 #[cfg(test)]
@@ -710,6 +919,72 @@ mod tests {
         assert_eq!(
             lrc,
             "[00:01.00]첫 줄\n[00:01.00]First line\n[00:02.50]둘째 줄\n[00:02.50]Second line"
+        );
+    }
+
+    #[test]
+    fn detects_same_language_english_source_as_skip() {
+        let source = "[00:09.07]You know I'm gonna give you ten out of ten\n[00:11.01]Know I'm gonna love you, love you to death\n[00:12.96]Baby, all night, again and again, yeah\n[00:16.88]You know I'm gonna give you ten out of ten";
+
+        let decision = same_language_skip_decision(source, "English")
+            .unwrap()
+            .expect("English lyrics targeting English should be skipped");
+
+        assert_eq!(decision.detected_language_code, "en");
+        assert_eq!(decision.target_language_code, "en");
+        assert!(decision.confidence >= SAME_LANGUAGE_SKIP_CONFIDENCE);
+    }
+
+    #[test]
+    fn does_not_skip_korean_source_targeting_english() {
+        let source = "[00:01.00]안녕하세요 오늘 밤은 너무 아름다워요\n[00:02.00]그대와 함께 노래하고 싶어요\n[00:03.00]이 마음을 영어로 전해 주세요";
+
+        assert!(same_language_skip_decision(source, "English")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn does_not_skip_mixed_korean_english_source_targeting_english() {
+        let source = "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:01.00]When I open my eyes in the morning, sunlight comes toward me\n[00:02.00]햇살에 눈 비비고 일어나고\n[00:02.00]I rub my eyes in the sunlight and get up\n[00:03.00]누군가 청소를 한 깨끗해진 거리\n[00:03.00]A clean street, as if someone has swept it";
+
+        assert!(same_language_skip_decision(source, "English")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn does_not_skip_uncertain_short_source() {
+        let source = "[00:01.00]Oh\n[00:02.00]Yeah";
+
+        assert!(same_language_skip_decision(source, "English")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn skipped_same_language_export_uses_original_lrc_for_translated_modes() {
+        let source = "[00:01.00]Hello world\n[00:02.00]Again";
+
+        assert_eq!(
+            build_export_lrc_for_translation_status(
+                source,
+                "skipped_same_language",
+                None,
+                TranslationExportMode::Translation,
+            )
+            .unwrap(),
+            source
+        );
+        assert_eq!(
+            build_export_lrc_for_translation_status(
+                source,
+                "skipped_same_language",
+                None,
+                TranslationExportMode::Dual,
+            )
+            .unwrap(),
+            source
         );
     }
 
