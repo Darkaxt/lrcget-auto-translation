@@ -4,9 +4,8 @@ use crate::persistent_entities::{
 };
 use crate::scanner::models::DbTrack;
 use crate::translation::{
-    self, LyricTranslation, LyricTranslationUpsert, TRANSLATION_STATUS_FAILED,
-    TRANSLATION_STATUS_PENDING, TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE,
-    TRANSLATION_STATUS_SUCCEEDED,
+    self, LyricTranslation, LyricTranslationUpsert, TRANSLATION_STATUS_PENDING,
+    TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE, TRANSLATION_STATUS_SUCCEEDED,
 };
 use crate::utils::prepare_input;
 use anyhow::Result;
@@ -65,8 +64,8 @@ pub fn initialize_database(app_handle: &AppHandle) -> Result<Connection, rusqlit
     if let Err(error) = repair_same_language_translation_rows(&db) {
         eprintln!("Failed to repair same-language translation rows: {}", error);
     }
-    if let Err(error) = mark_stale_pending_translations_failed(&db) {
-        eprintln!("Failed to mark stale pending translation rows: {}", error);
+    if let Err(error) = delete_stale_incomplete_translation_attempts(&db) {
+        eprintln!("Failed to delete stale incomplete translation rows: {}", error);
     }
 
     Ok(db)
@@ -199,17 +198,22 @@ pub fn repair_same_language_translation_rows(db: &Connection) -> Result<usize> {
     Ok(repairs.len())
 }
 
-pub fn mark_stale_pending_translations_failed(db: &Connection) -> Result<usize> {
+pub fn delete_stale_incomplete_translation_attempts(db: &Connection) -> Result<usize> {
     db.execute(
         indoc! {"
-            UPDATE lyric_translations
-            SET status = ?,
-                error_message = COALESCE(error_message, 'Previous translation attempt did not finish.'),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE status = ?
-              AND datetime(created_at) < datetime('now', '-15 minutes')
+            DELETE FROM lyric_translations
+            WHERE (
+                status = ?
+                AND datetime(created_at) < datetime('now', '-15 minutes')
+            )
+            OR (
+                status = 'failed'
+                AND error_message = 'Previous translation attempt did not finish.'
+                AND translated_lines_json IS NULL
+                AND translated_lrc IS NULL
+            )
         "},
-        (TRANSLATION_STATUS_FAILED, TRANSLATION_STATUS_PENDING),
+        [TRANSLATION_STATUS_PENDING],
     )
     .map_err(Into::into)
 }
@@ -2148,7 +2152,7 @@ mod translation_db_tests {
     }
 
     #[test]
-    fn marks_stale_pending_translation_rows_failed() {
+    fn deletes_stale_pending_translation_rows() {
         let db = setup_db();
         let mut pending = successful_translation("source-a");
         pending.status = "pending".to_string();
@@ -2163,8 +2167,23 @@ mod translation_db_tests {
         )
         .unwrap();
 
-        assert_eq!(mark_stale_pending_translations_failed(&db).unwrap(), 1);
-        assert_eq!(get_track_translation_status(42, &db).unwrap(), "failed");
+        assert_eq!(delete_stale_incomplete_translation_attempts(&db).unwrap(), 1);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "none");
+    }
+
+    #[test]
+    fn deletes_interrupted_failure_rows_from_previous_cleanup() {
+        let db = setup_db();
+        let mut failed = successful_translation("source-a");
+        failed.status = "failed".to_string();
+        failed.translated_lines_json = None;
+        failed.translated_lrc = None;
+        failed.error_message = Some("Previous translation attempt did not finish.".to_string());
+
+        upsert_lyric_translation(&failed, &db).unwrap();
+
+        assert_eq!(delete_stale_incomplete_translation_attempts(&db).unwrap(), 1);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "none");
     }
 
     #[test]
