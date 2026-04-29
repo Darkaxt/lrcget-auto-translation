@@ -1,10 +1,11 @@
-use crate::lyricsfile::{lyrics_presence_from_lyricsfile, LyricsPresence};
+use crate::lyricsfile::{lyrics_presence_from_lyricsfile, parse_lyricsfile, LyricsPresence};
 use crate::persistent_entities::{
     PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack,
 };
 use crate::scanner::models::DbTrack;
 use crate::translation::{
-    LyricTranslation, LyricTranslationUpsert, TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE,
+    self, LyricTranslation, LyricTranslationUpsert, TRANSLATION_STATUS_FAILED,
+    TRANSLATION_STATUS_PENDING, TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE,
     TRANSLATION_STATUS_SUCCEEDED,
 };
 use crate::utils::prepare_input;
@@ -61,6 +62,12 @@ pub fn initialize_database(app_handle: &AppHandle) -> Result<Connection, rusqlit
     if let Err(error) = backfill_track_lyrics_presence(&db) {
         eprintln!("Failed to backfill track lyrics presence flags: {}", error);
     }
+    if let Err(error) = repair_same_language_translation_rows(&db) {
+        eprintln!("Failed to repair same-language translation rows: {}", error);
+    }
+    if let Err(error) = mark_stale_pending_translations_failed(&db) {
+        eprintln!("Failed to mark stale pending translation rows: {}", error);
+    }
 
     Ok(db)
 }
@@ -112,6 +119,99 @@ pub fn backfill_track_lyrics_presence(db: &Connection) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn repair_same_language_translation_rows(db: &Connection) -> Result<usize> {
+    let mut statement = db.prepare(indoc! {"
+        SELECT
+            id,
+            source_lyricsfile,
+            target_language
+        FROM lyric_translations
+        WHERE status IN ('succeeded', 'failed', 'pending')
+    "})?;
+    let mut rows = statement.query([])?;
+    let mut repairs = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get("id")?;
+        let source_lyricsfile: String = row.get("source_lyricsfile")?;
+        let target_language: String = row.get("target_language")?;
+        let Ok(parsed) = parse_lyricsfile(&source_lyricsfile) else {
+            continue;
+        };
+        if parsed.is_instrumental {
+            continue;
+        }
+        let Some(source_lrc) = parsed
+            .synced_lyrics
+            .as_deref()
+            .map(str::trim)
+            .filter(|content| !content.is_empty())
+        else {
+            continue;
+        };
+        let Some(skip) = translation::same_language_skip_decision(source_lrc, &target_language)?
+        else {
+            continue;
+        };
+
+        let error_message = format!(
+            "Source lyrics are already {}; translation skipped.",
+            skip.target_language
+        );
+        let metadata = serde_json::json!({
+            "skipReason": skip.reason,
+            "detectedLanguage": skip.detected_language,
+            "detectedLanguageCode": skip.detected_language_code,
+            "targetLanguage": skip.target_language,
+            "targetLanguageCode": skip.target_language_code,
+            "confidence": skip.confidence,
+            "repairReason": "existing_translation_row_same_language"
+        })
+        .to_string();
+        repairs.push((id, error_message, metadata));
+    }
+    drop(rows);
+    drop(statement);
+
+    for (id, error_message, metadata) in repairs.iter() {
+        db.execute(
+            indoc! {"
+                UPDATE lyric_translations
+                SET status = ?,
+                    translated_lines_json = NULL,
+                    translated_lrc = NULL,
+                    error_message = ?,
+                    provider_metadata_json = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            "},
+            (
+                TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE,
+                error_message,
+                metadata,
+                id,
+            ),
+        )?;
+    }
+
+    Ok(repairs.len())
+}
+
+pub fn mark_stale_pending_translations_failed(db: &Connection) -> Result<usize> {
+    db.execute(
+        indoc! {"
+            UPDATE lyric_translations
+            SET status = ?,
+                error_message = COALESCE(error_message, 'Previous translation attempt did not finish.'),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = ?
+              AND datetime(created_at) < datetime('now', '-15 minutes')
+        "},
+        (TRANSLATION_STATUS_FAILED, TRANSLATION_STATUS_PENDING),
+    )
+    .map_err(Into::into)
 }
 
 pub fn get_directories(db: &Connection) -> Result<Vec<String>> {
@@ -1848,6 +1948,7 @@ pub fn find_tracks_by_metadata(
 #[cfg(test)]
 mod translation_db_tests {
     use super::*;
+    use crate::lyricsfile::{build_lyricsfile, LyricsfileTrackMetadata};
 
     fn setup_db() -> Connection {
         let db = Connection::open_in_memory().unwrap();
@@ -1894,6 +1995,15 @@ mod translation_db_tests {
             error_message: None,
             provider_metadata_json: Some(r#"{"requestedModel":"gemini-flash-latest"}"#.to_string()),
         }
+    }
+
+    fn lyricsfile_from_lrc(lrc: &str) -> String {
+        build_lyricsfile(
+            &LyricsfileTrackMetadata::new("Test Track", "Test Album", "Test Artist", 180.0),
+            None,
+            Some(lrc),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1986,6 +2096,75 @@ mod translation_db_tests {
             get_track_translation_status(42, &db).unwrap(),
             "already_target_language"
         );
+    }
+
+    #[test]
+    fn repairs_existing_same_language_rows_to_skipped_status() {
+        let db = setup_db();
+        let source_lrc = "[00:01.00]I wake again\n[00:02.00]You got me up to my old ways again\n[00:03.00]One by one, two by two\n[00:04.00]My walls come falling down\n[00:05.00]Was lost and now I'm found";
+        let mut old_failed = successful_translation("source-a");
+        old_failed.status = "failed".to_string();
+        old_failed.source_lyricsfile = lyricsfile_from_lrc(source_lrc);
+        old_failed.translated_lines_json = None;
+        old_failed.translated_lrc = None;
+        old_failed.error_message = Some("HTTP status client error (400 Bad Request)".to_string());
+
+        upsert_lyric_translation(&old_failed, &db).unwrap();
+
+        assert_eq!(repair_same_language_translation_rows(&db).unwrap(), 1);
+
+        let found = get_current_lyric_translation(
+            7,
+            "source-a",
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(found.status, "skipped_same_language");
+        assert_eq!(found.translated_lines_json, None);
+        assert_eq!(found.translated_lrc, None);
+        assert_eq!(
+            get_track_translation_status(42, &db).unwrap(),
+            "already_target_language"
+        );
+    }
+
+    #[test]
+    fn repair_does_not_reclassify_mixed_language_rows() {
+        let db = setup_db();
+        let source_lrc = "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:02.00]When I open my eyes in the morning\n[00:03.00]햇살에 눈 비비고 일어나고\n[00:04.00]A clean street, as if someone has swept it";
+        let mut old_success = successful_translation("source-a");
+        old_success.source_lyricsfile = lyricsfile_from_lrc(source_lrc);
+
+        upsert_lyric_translation(&old_success, &db).unwrap();
+
+        assert_eq!(repair_same_language_translation_rows(&db).unwrap(), 0);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "translated");
+    }
+
+    #[test]
+    fn marks_stale_pending_translation_rows_failed() {
+        let db = setup_db();
+        let mut pending = successful_translation("source-a");
+        pending.status = "pending".to_string();
+        pending.translated_lines_json = None;
+        pending.translated_lrc = None;
+        pending.error_message = None;
+
+        upsert_lyric_translation(&pending, &db).unwrap();
+        db.execute(
+            "UPDATE lyric_translations SET created_at = datetime('now', '-30 minutes'), updated_at = datetime('now', '-30 minutes') WHERE track_id = 42",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(mark_stale_pending_translations_failed(&db).unwrap(), 1);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "failed");
     }
 
     #[test]

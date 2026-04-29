@@ -459,9 +459,8 @@ async fn request_gemini_translation(
             }
         }))
         .send()
-        .await?
-        .error_for_status()?;
-    let raw = response.text().await?;
+        .await?;
+    let raw = response_text_or_status_error(response, "Gemini").await?;
     structured_json_from_gemini_response(&raw)
 }
 
@@ -500,8 +499,8 @@ async fn request_openai_compatible_translation(
         builder = builder.bearer_auth(config.translation_openai_api_key.trim());
     }
 
-    let response = builder.send().await?.error_for_status()?;
-    let raw = response.text().await?;
+    let response = builder.send().await?;
+    let raw = response_text_or_status_error(response, "OpenAI-compatible").await?;
     structured_json_from_openai_response(&raw)
 }
 
@@ -527,9 +526,8 @@ async fn request_deepl_translation(
         .post(endpoint)
         .form(&form)
         .send()
-        .await?
-        .error_for_status()?;
-    let raw = response.text().await?;
+        .await?;
+    let raw = response_text_or_status_error(response, "DeepL").await?;
     structured_json_from_deepl_response(&raw)
 }
 
@@ -549,9 +547,8 @@ async fn request_google_translation(
             "format": "text"
         }))
         .send()
-        .await?
-        .error_for_status()?;
-    let raw = response.text().await?;
+        .await?;
+    let raw = response_text_or_status_error(response, "Google Translate").await?;
     structured_json_from_google_response(&raw)
 }
 
@@ -584,9 +581,91 @@ async fn request_microsoft_translation(
         );
     }
 
-    let response = builder.send().await?.error_for_status()?;
-    let raw = response.text().await?;
+    let response = builder.send().await?;
+    let raw = response_text_or_status_error(response, "Microsoft Translator").await?;
     structured_json_from_microsoft_response(&raw)
+}
+
+async fn response_text_or_status_error(
+    response: reqwest::Response,
+    provider: &str,
+) -> Result<String> {
+    let status = response.status();
+    let url = response.url().clone();
+    let body = response.text().await?;
+
+    if !status.is_success() {
+        return Err(anyhow!(
+            "{}",
+            provider_status_error_message(provider, status, &url, &body)
+        ));
+    }
+
+    Ok(body)
+}
+
+fn provider_status_error_message(
+    provider: &str,
+    status: reqwest::StatusCode,
+    url: &reqwest::Url,
+    body: &str,
+) -> String {
+    let body = response_body_preview(body);
+    format!(
+        "{} request failed with HTTP {} for {}: {}",
+        provider,
+        status.as_u16(),
+        redacted_url_string(url),
+        body
+    )
+}
+
+fn response_body_preview(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "<empty response body>".to_string();
+    }
+
+    const MAX_CHARS: usize = 1200;
+    let mut preview = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    if trimmed.chars().count() > MAX_CHARS {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn redacted_url_string(url: &reqwest::Url) -> String {
+    const SENSITIVE_QUERY_KEYS: &[&str] = &["key", "api_key", "apikey", "access_token", "auth_key"];
+    let query_pairs = url
+        .query_pairs()
+        .map(|(key, value)| {
+            let redacted = SENSITIVE_QUERY_KEYS
+                .iter()
+                .any(|sensitive_key| key.eq_ignore_ascii_case(sensitive_key));
+            (
+                key.to_string(),
+                if redacted {
+                    "REDACTED".to_string()
+                } else {
+                    value.to_string()
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if query_pairs.is_empty() {
+        return url.to_string();
+    }
+
+    let mut redacted_url = url.clone();
+    redacted_url.set_query(None);
+    {
+        let mut serializer = redacted_url.query_pairs_mut();
+        for (key, value) in query_pairs {
+            serializer.append_pair(&key, &value);
+        }
+    }
+    redacted_url.to_string()
 }
 
 fn build_context_prompt(request: &TranslationRequest) -> String {
@@ -801,6 +880,15 @@ fn normalize_detected_language_code(code: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_lrc_from_lines(lines: &[&str]) -> String {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| format!("[00:{:02}.00]{}", index + 1, line))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn source_hash_changes_when_original_changes() {
         let first = lyrics_source_hash("[00:01.00]안녕");
@@ -936,6 +1024,23 @@ mod tests {
     }
 
     #[test]
+    fn detects_same_language_repetitive_english_source_as_skip() {
+        let source = test_lrc_from_lines(&[
+            "One by one, two by two",
+            "My walls come falling down",
+            "Was lost and now I'm found",
+            "Wasn't looking, wasn't searching",
+            "You came without a sound",
+            "So let 'em fall",
+            "Let 'em fall, let 'em fall",
+        ]);
+
+        assert!(same_language_skip_decision(&source, "English")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
     fn does_not_skip_korean_source_targeting_english() {
         let source = "[00:01.00]안녕하세요 오늘 밤은 너무 아름다워요\n[00:02.00]그대와 함께 노래하고 싶어요\n[00:03.00]이 마음을 영어로 전해 주세요";
 
@@ -1004,6 +1109,25 @@ mod tests {
             structured_json_from_gemini_response(raw).unwrap(),
             r#"{"lines":[{"source_index":0,"translated_text":"Hello"}]}"#
         );
+    }
+
+    #[test]
+    fn provider_status_error_includes_body_without_url_secret() {
+        let url = reqwest::Url::parse(
+            "https://translation.googleapis.com/language/translate/v2?key=secret-token",
+        )
+        .unwrap();
+        let message = provider_status_error_message(
+            "Google Translate",
+            reqwest::StatusCode::BAD_REQUEST,
+            &url,
+            r#"{"error":{"message":"Invalid request payload"}}"#,
+        );
+
+        assert!(message.contains("Google Translate request failed with HTTP 400"));
+        assert!(message.contains("Invalid request payload"));
+        assert!(!message.contains("secret-token"));
+        assert!(message.contains("key=REDACTED"));
     }
 
     #[test]
