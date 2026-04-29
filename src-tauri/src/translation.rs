@@ -3,6 +3,7 @@ use crate::persistent_entities::PersistentConfig;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Duration;
 use xxhash_rust::xxh3::xxh3_64;
 
 pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
@@ -18,6 +19,7 @@ const MIN_LANGUAGE_DETECTION_CHARS: usize = 40;
 const CHUNK_LANGUAGE_DETECTION_CHARS: usize = 80;
 const CHUNK_LANGUAGE_DETECTION_CONFIDENCE: f64 = 0.70;
 const LATIN_TARGET_NON_LATIN_CONFLICT_RATIO: f64 = 0.05;
+const TRANSLATION_PROVIDER_TIMEOUT_SECONDS: u64 = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -312,13 +314,16 @@ pub fn same_language_skip_decision(
     let target_language_code = target_language_code(target_language, false);
     let confidence = info.confidence();
     let script_counts = script_counts(&detection_text);
-    let has_language_conflict = has_script_conflict(&script_counts, &target_language_code)
-        || has_reliable_non_target_chunk(&detection_text, &target_language_code);
+    let has_script_conflict = has_script_conflict(&script_counts, &target_language_code);
+    let has_chunk_conflict = has_reliable_non_target_chunk(&detection_text, &target_language_code);
+    let has_english_lexical_signal =
+        target_language_code == "en" && has_likely_english_lexical_signal(&detection_text);
 
     if detected_language_code == target_language_code
-        && confidence >= SAME_LANGUAGE_SKIP_CONFIDENCE
-        && info.is_reliable()
-        && !has_language_conflict
+        && ((confidence >= SAME_LANGUAGE_SKIP_CONFIDENCE && info.is_reliable())
+            || has_english_lexical_signal)
+        && !has_script_conflict
+        && (!has_chunk_conflict || has_english_lexical_signal)
     {
         return Ok(Some(SameLanguageSkipDecision {
             detected_language: info.lang().eng_name().to_string(),
@@ -440,7 +445,7 @@ async fn request_gemini_translation(
     let api_key = require_config_value(&config.translation_gemini_api_key, "Gemini API key")?;
     let model = non_empty_or_default(&config.translation_gemini_model, DEFAULT_GEMINI_MODEL);
     let line_count = parse_source_lines(&request.source_lrc).len();
-    let client = reqwest::Client::new();
+    let client = translation_http_client()?;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
@@ -473,7 +478,7 @@ async fn request_openai_compatible_translation(
         "OpenAI-compatible base URL",
     )?;
     let model = require_config_value(&config.translation_openai_model, "OpenAI-compatible model")?;
-    let client = reqwest::Client::new();
+    let client = translation_http_client()?;
     let mut builder = client
         .post(format!(
             "{}/chat/completions",
@@ -522,7 +527,7 @@ async fn request_deepl_translation(
     for line in source_texts(request) {
         form.push(("text".to_string(), line));
     }
-    let response = reqwest::Client::new()
+    let response = translation_http_client()?
         .post(endpoint)
         .form(&form)
         .send()
@@ -536,7 +541,7 @@ async fn request_google_translation(
     request: &TranslationRequest,
 ) -> Result<String> {
     let api_key = require_config_value(&config.translation_google_api_key, "Google API key")?;
-    let response = reqwest::Client::new()
+    let response = translation_http_client()?
         .post(format!(
             "https://translation.googleapis.com/language/translate/v2?key={}",
             api_key
@@ -560,7 +565,7 @@ async fn request_microsoft_translation(
         &config.translation_microsoft_api_key,
         "Microsoft Translator API key",
     )?;
-    let client = reqwest::Client::new();
+    let client = translation_http_client()?;
     let mut builder = client
         .post(format!(
             "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to={}",
@@ -668,6 +673,13 @@ fn redacted_url_string(url: &reqwest::Url) -> String {
     redacted_url.to_string()
 }
 
+fn translation_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(TRANSLATION_PROVIDER_TIMEOUT_SECONDS))
+        .build()
+        .map_err(Into::into)
+}
+
 fn build_context_prompt(request: &TranslationRequest) -> String {
     let source_language = request
         .source_language
@@ -738,6 +750,93 @@ fn has_reliable_non_target_chunk(text: &str, target_language_code: &str) -> bool
                 && info.confidence() >= CHUNK_LANGUAGE_DETECTION_CONFIDENCE
                 && info.is_reliable()
         })
+}
+
+fn has_likely_english_lexical_signal(text: &str) -> bool {
+    let mut token_count = 0usize;
+    let mut english_signal_count = 0usize;
+
+    for token in text
+        .split(|ch: char| !ch.is_ascii_alphabetic())
+        .map(str::to_lowercase)
+        .filter(|token| !token.is_empty())
+    {
+        token_count += 1;
+        if is_english_signal_word(&token) {
+            english_signal_count += 1;
+        }
+    }
+
+    token_count >= 30 && (english_signal_count as f64 / token_count as f64) >= 0.18
+}
+
+fn is_english_signal_word(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "about"
+            | "again"
+            | "ain"
+            | "all"
+            | "and"
+            | "anything"
+            | "are"
+            | "be"
+            | "but"
+            | "can"
+            | "come"
+            | "do"
+            | "down"
+            | "feel"
+            | "for"
+            | "forgot"
+            | "get"
+            | "give"
+            | "go"
+            | "got"
+            | "guess"
+            | "have"
+            | "here"
+            | "i"
+            | "if"
+            | "in"
+            | "is"
+            | "it"
+            | "let"
+            | "like"
+            | "living"
+            | "me"
+            | "need"
+            | "not"
+            | "of"
+            | "on"
+            | "or"
+            | "out"
+            | "party"
+            | "so"
+            | "stay"
+            | "stop"
+            | "that"
+            | "the"
+            | "then"
+            | "there"
+            | "this"
+            | "throw"
+            | "to"
+            | "tonight"
+            | "up"
+            | "us"
+            | "want"
+            | "was"
+            | "we"
+            | "well"
+            | "what"
+            | "when"
+            | "with"
+            | "won"
+            | "you"
+            | "your"
+            | "youre"
+    )
 }
 
 fn language_detection_chunks(text: &str) -> Vec<String> {
@@ -1041,8 +1140,86 @@ mod tests {
     }
 
     #[test]
+    fn detects_same_language_slang_heavy_english_source_as_skip() {
+        let source = "[00:07.85] Ever feel like you're holding\n\
+            [00:08.99] In the old dude that was younger then? \"I feel you bro\"\n\
+            [00:11.35] Crazy demands like everyday and you're turning in early on the weekends\n\
+            [00:15.19] Seems like yo loosing what\n\
+            [00:16.42] You told yourself you'd never give up!\n\
+            [00:18.59] So caught up in the hype of making a living that you forgot\n\
+            [00:20.54] To live you're life! Well guess what?\n\
+            [00:22.38] Can't stop, won't stop that's what I'm here about to crank it up\n\
+            [00:25.25] It's the summer time yo\n\
+            [00:26.54] And the sun ain't setting so we might as well stay up let's go\n\
+            [00:29.77] Let's throw another beat on the wheels of steel\n\
+            [00:31.47] And another shrimp on the barbie\n\
+            [00:33.25] I've got a fresh sunburn and some mad appeal\n\
+            [00:34.96] But you know I came to start the party!\n\
+            [00:36.36] Come with us! come with us!\n\
+            [00:41.25] We can go anywhere tonight! n' go anywhere tonight!\n\
+            [00:49.77] Just got to come with us!\n\
+            [00:52.63] Come with us! come with us!\n\
+            [00:56.19] We can do anything we want! n' do anything we want!\n\
+            [01:04.23] Just got to come with us!\n\
+            [01:21.85] Get wild get stupid crazy, come solo bring yo lady!\n\
+            [01:24.85] Oh yes we are where the action is!\n\
+            [01:26.89] Poolside where the splashing is 'Go baby'\n\
+            [01:29.03] Shady with a lemonaybe the women and\n\
+            [01:31.43] The weather both are hotter than Hades!\n\
+            [01:32.84] Up thing swag, ain't poppin' no tags\n\
+            [01:34.11] But here's my number call me maybe\n\
+            [01:36.39] I flow like a hose no foolin'\n\
+            [01:38.07] I'm like a pie in the window cooling\n\
+            [01:39.42] Yo, check out the roof that I'm ruling\n\
+            [01:41.53] Imma hold this down like a bully in a poolman\n\
+            [01:44.02] 3 months out livin' da cold\n\
+            [01:45.42] We can do anything we want\n\
+            [01:47.50] Girl Imma get bronze you stay gold\n\
+            [01:49.12] You're a pal in a confidant get it?\n\
+            [01:50.94] Come with us! come with us!\n\
+            [01:54.08] We can go anywhere tonight! n' go anywhere tonight!\n\
+            [02:03.55] Just got to come with us!\n\
+            [02:06.72] Come with us! come with us!\n\
+            [02:10.32] We can do anything we want! n' do anything we want!\n\
+            [02:18.48] Just got to come with us!\n\
+            [02:35.40] So come on come on let's get down with the sound\n\
+            [02:37.40] And ya one of the true believers\n\
+            [02:38.74] But if ya wanna play it cool you can stand you ground\n\
+            [02:40.76] 'Cause we really don't need you neither\n\
+            [02:42.47] Either you win or yo on ya way out\n\
+            [02:44.20] 'Cause when the sun goes down we stay out\n\
+            [02:46.23] Chillin' on da lawn\n\
+            [02:47.28] 'Til da break a dawn, or 'til the sprinklers kick us out\n\
+            [02:49.99] Come with us! come with us!\n\
+            [02:53.57] We can go anywhere tonight! n' go anywhere tonight!\n\
+            [03:02.34] Just got to come with us!\n\
+            [03:05.53] Come with us! come with us!\n\
+            [03:09.15] We can do anything we want! n' do anything we want!\n\
+            [03:17.27] Just got to come with us!\n\
+            [03:20.56] Come with us! come with us!\n\
+            [03:23.99] We can go anywhere tonight! n' go anywhere tonight!\n\
+            [03:32.49] Just got to come with us!";
+
+        assert!(same_language_skip_decision(source, "English")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
     fn does_not_skip_korean_source_targeting_english() {
         let source = "[00:01.00]안녕하세요 오늘 밤은 너무 아름다워요\n[00:02.00]그대와 함께 노래하고 싶어요\n[00:03.00]이 마음을 영어로 전해 주세요";
+
+        assert!(same_language_skip_decision(source, "English")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn does_not_skip_spanish_source_targeting_english() {
+        let source = "[00:01.00]Esta noche quiero cantar contigo bajo la luna\n\
+            [00:02.00]Mi corazon se pierde cuando escucho tu voz\n\
+            [00:03.00]No quiero olvidar la promesa que hicimos ayer\n\
+            [00:04.00]Ven conmigo y dejemos que baile la ciudad";
 
         assert!(same_language_skip_decision(source, "English")
             .unwrap()

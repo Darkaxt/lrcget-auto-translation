@@ -65,7 +65,10 @@ pub fn initialize_database(app_handle: &AppHandle) -> Result<Connection, rusqlit
         eprintln!("Failed to repair same-language translation rows: {}", error);
     }
     if let Err(error) = delete_stale_incomplete_translation_attempts(&db) {
-        eprintln!("Failed to delete stale incomplete translation rows: {}", error);
+        eprintln!(
+            "Failed to delete stale incomplete translation rows: {}",
+            error
+        );
     }
 
     Ok(db)
@@ -204,7 +207,6 @@ pub fn delete_stale_incomplete_translation_attempts(db: &Connection) -> Result<u
             DELETE FROM lyric_translations
             WHERE (
                 status = ?
-                AND datetime(created_at) < datetime('now', '-15 minutes')
             )
             OR (
                 status = 'failed'
@@ -2152,7 +2154,7 @@ mod translation_db_tests {
     }
 
     #[test]
-    fn deletes_stale_pending_translation_rows() {
+    fn deletes_pending_translation_rows_on_startup() {
         let db = setup_db();
         let mut pending = successful_translation("source-a");
         pending.status = "pending".to_string();
@@ -2161,13 +2163,11 @@ mod translation_db_tests {
         pending.error_message = None;
 
         upsert_lyric_translation(&pending, &db).unwrap();
-        db.execute(
-            "UPDATE lyric_translations SET created_at = datetime('now', '-30 minutes'), updated_at = datetime('now', '-30 minutes') WHERE track_id = 42",
-            [],
-        )
-        .unwrap();
 
-        assert_eq!(delete_stale_incomplete_translation_attempts(&db).unwrap(), 1);
+        assert_eq!(
+            delete_stale_incomplete_translation_attempts(&db).unwrap(),
+            1
+        );
         assert_eq!(get_track_translation_status(42, &db).unwrap(), "none");
     }
 
@@ -2182,7 +2182,10 @@ mod translation_db_tests {
 
         upsert_lyric_translation(&failed, &db).unwrap();
 
-        assert_eq!(delete_stale_incomplete_translation_attempts(&db).unwrap(), 1);
+        assert_eq!(
+            delete_stale_incomplete_translation_attempts(&db).unwrap(),
+            1
+        );
         assert_eq!(get_track_translation_status(42, &db).unwrap(), "none");
     }
 
