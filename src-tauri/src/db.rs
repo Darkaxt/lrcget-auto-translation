@@ -3,6 +3,7 @@ use crate::persistent_entities::{
     PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack,
 };
 use crate::scanner::models::DbTrack;
+use crate::translation::{LyricTranslation, LyricTranslationUpsert};
 use crate::utils::prepare_input;
 use anyhow::Result;
 use include_dir::{include_dir, Dir};
@@ -43,7 +44,10 @@ pub fn initialize_database(app_handle: &AppHandle) -> Result<Connection, rusqlit
             let new_version: i64 = db
                 .query_row("PRAGMA user_version;", [], |row| row.get(0))
                 .unwrap_or(-1);
-            println!("[DB Init] Migrations applied successfully. New user_version: {}", new_version);
+            println!(
+                "[DB Init] Migrations applied successfully. New user_version: {}",
+                new_version
+            );
         }
         Err(e) => {
             eprintln!("[DB Init] Failed to run database migrations: {:?}", e);
@@ -151,7 +155,20 @@ pub fn get_config(db: &Connection) -> Result<PersistentConfig> {
         try_embed_lyrics,
         theme_mode,
         lrclib_instance,
-        volume
+        volume,
+        translation_auto_enabled,
+        translation_target_language,
+        translation_provider,
+        translation_export_mode,
+        translation_gemini_api_key,
+        translation_gemini_model,
+        translation_deepl_api_key,
+        translation_google_api_key,
+        translation_microsoft_api_key,
+        translation_microsoft_region,
+        translation_openai_base_url,
+        translation_openai_api_key,
+        translation_openai_model
       FROM config_data
       LIMIT 1
     "})?;
@@ -164,6 +181,19 @@ pub fn get_config(db: &Connection) -> Result<PersistentConfig> {
             theme_mode: r.get("theme_mode")?,
             lrclib_instance: r.get("lrclib_instance")?,
             volume: r.get("volume")?,
+            translation_auto_enabled: r.get("translation_auto_enabled")?,
+            translation_target_language: r.get("translation_target_language")?,
+            translation_provider: r.get("translation_provider")?,
+            translation_export_mode: r.get("translation_export_mode")?,
+            translation_gemini_api_key: r.get("translation_gemini_api_key")?,
+            translation_gemini_model: r.get("translation_gemini_model")?,
+            translation_deepl_api_key: r.get("translation_deepl_api_key")?,
+            translation_google_api_key: r.get("translation_google_api_key")?,
+            translation_microsoft_api_key: r.get("translation_microsoft_api_key")?,
+            translation_microsoft_region: r.get("translation_microsoft_region")?,
+            translation_openai_base_url: r.get("translation_openai_base_url")?,
+            translation_openai_api_key: r.get("translation_openai_api_key")?,
+            translation_openai_model: r.get("translation_openai_model")?,
         })
     })?;
     Ok(row)
@@ -177,6 +207,19 @@ pub fn set_config(
     theme_mode: &str,
     lrclib_instance: &str,
     volume: f64,
+    translation_auto_enabled: bool,
+    translation_target_language: &str,
+    translation_provider: &str,
+    translation_export_mode: &str,
+    translation_gemini_api_key: &str,
+    translation_gemini_model: &str,
+    translation_deepl_api_key: &str,
+    translation_google_api_key: &str,
+    translation_microsoft_api_key: &str,
+    translation_microsoft_region: &str,
+    translation_openai_base_url: &str,
+    translation_openai_api_key: &str,
+    translation_openai_model: &str,
     db: &Connection,
 ) -> Result<()> {
     let mut statement = db.prepare(indoc! {"
@@ -188,10 +231,23 @@ pub fn set_config(
         try_embed_lyrics = ?,
         theme_mode = ?,
         lrclib_instance = ?,
-        volume = ?
+        volume = ?,
+        translation_auto_enabled = ?,
+        translation_target_language = ?,
+        translation_provider = ?,
+        translation_export_mode = ?,
+        translation_gemini_api_key = ?,
+        translation_gemini_model = ?,
+        translation_deepl_api_key = ?,
+        translation_google_api_key = ?,
+        translation_microsoft_api_key = ?,
+        translation_microsoft_region = ?,
+        translation_openai_base_url = ?,
+        translation_openai_api_key = ?,
+        translation_openai_model = ?
       WHERE 1
     "})?;
-    statement.execute((
+    statement.execute(params![
         skip_tracks_with_synced_lyrics,
         skip_tracks_with_plain_lyrics,
         show_line_count,
@@ -199,7 +255,20 @@ pub fn set_config(
         theme_mode,
         lrclib_instance,
         volume,
-    ))?;
+        translation_auto_enabled,
+        translation_target_language,
+        translation_provider,
+        translation_export_mode,
+        translation_gemini_api_key,
+        translation_gemini_model,
+        translation_deepl_api_key,
+        translation_google_api_key,
+        translation_microsoft_api_key,
+        translation_microsoft_region,
+        translation_openai_base_url,
+        translation_openai_api_key,
+        translation_openai_model,
+    ])?;
     Ok(())
 }
 
@@ -207,6 +276,224 @@ pub fn set_volume_config(volume: f64, db: &Connection) -> Result<()> {
     let mut statement = db.prepare("UPDATE config_data SET volume = ? WHERE 1")?;
     statement.execute([volume])?;
     Ok(())
+}
+
+pub fn upsert_lyric_translation(
+    translation: &LyricTranslationUpsert,
+    db: &Connection,
+) -> Result<i64> {
+    db.execute(
+        indoc! {"
+            INSERT INTO lyric_translations (
+                lyricsfile_id,
+                track_id,
+                source_hash,
+                source_lyricsfile,
+                provider,
+                provider_model,
+                target_language,
+                settings_hash,
+                status,
+                translated_lines_json,
+                translated_lrc,
+                error_message,
+                provider_metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(lyricsfile_id, source_hash, provider, provider_model, target_language, settings_hash)
+            DO UPDATE SET
+                track_id = excluded.track_id,
+                source_lyricsfile = excluded.source_lyricsfile,
+                status = excluded.status,
+                translated_lines_json = excluded.translated_lines_json,
+                translated_lrc = excluded.translated_lrc,
+                error_message = excluded.error_message,
+                provider_metadata_json = excluded.provider_metadata_json,
+                updated_at = CURRENT_TIMESTAMP
+        "},
+        (
+            translation.lyricsfile_id,
+            translation.track_id,
+            &translation.source_hash,
+            &translation.source_lyricsfile,
+            &translation.provider,
+            &translation.provider_model,
+            &translation.target_language,
+            &translation.settings_hash,
+            &translation.status,
+            &translation.translated_lines_json,
+            &translation.translated_lrc,
+            &translation.error_message,
+            &translation.provider_metadata_json,
+        ),
+    )?;
+
+    let id = db.query_row(
+        indoc! {"
+            SELECT id
+            FROM lyric_translations
+            WHERE lyricsfile_id = ?
+              AND source_hash = ?
+              AND provider = ?
+              AND provider_model = ?
+              AND target_language = ?
+              AND settings_hash = ?
+            LIMIT 1
+        "},
+        (
+            translation.lyricsfile_id,
+            &translation.source_hash,
+            &translation.provider,
+            &translation.provider_model,
+            &translation.target_language,
+            &translation.settings_hash,
+        ),
+        |row| row.get(0),
+    )?;
+
+    Ok(id)
+}
+
+pub fn get_current_lyric_translation(
+    lyricsfile_id: i64,
+    source_hash: &str,
+    provider: &str,
+    provider_model: &str,
+    target_language: &str,
+    settings_hash: &str,
+    db: &Connection,
+) -> Result<Option<LyricTranslation>> {
+    db.query_row(
+        indoc! {"
+            SELECT
+                id,
+                lyricsfile_id,
+                track_id,
+                source_hash,
+                source_lyricsfile,
+                provider,
+                provider_model,
+                target_language,
+                settings_hash,
+                status,
+                translated_lines_json,
+                translated_lrc,
+                error_message,
+                provider_metadata_json
+            FROM lyric_translations
+            WHERE lyricsfile_id = ?
+              AND source_hash = ?
+              AND provider = ?
+              AND provider_model = ?
+              AND target_language = ?
+              AND settings_hash = ?
+              AND status = 'succeeded'
+            LIMIT 1
+        "},
+        (
+            lyricsfile_id,
+            source_hash,
+            provider,
+            provider_model,
+            target_language,
+            settings_hash,
+        ),
+        |row| {
+            Ok(LyricTranslation {
+                id: row.get("id")?,
+                lyricsfile_id: row.get("lyricsfile_id")?,
+                track_id: row.get("track_id")?,
+                source_hash: row.get("source_hash")?,
+                source_lyricsfile: row.get("source_lyricsfile")?,
+                provider: row.get("provider")?,
+                provider_model: row.get("provider_model")?,
+                target_language: row.get("target_language")?,
+                settings_hash: row.get("settings_hash")?,
+                status: row.get("status")?,
+                translated_lines_json: row.get("translated_lines_json")?,
+                translated_lrc: row.get("translated_lrc")?,
+                error_message: row.get("error_message")?,
+                provider_metadata_json: row.get("provider_metadata_json")?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+pub fn get_track_translation_status(track_id: i64, db: &Connection) -> Result<String> {
+    let status = db
+        .query_row(
+            indoc! {"
+                SELECT status
+                FROM lyric_translations
+                WHERE track_id = ?
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 1
+            "},
+            [track_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    Ok(match status.as_deref() {
+        Some("succeeded") => "translated".to_string(),
+        Some("pending") => "pending".to_string(),
+        Some("failed") => "failed".to_string(),
+        Some(_) => "none".to_string(),
+        None => "none".to_string(),
+    })
+}
+
+pub fn list_lyric_translations_for_track(
+    track_id: i64,
+    db: &Connection,
+) -> Result<Vec<LyricTranslation>> {
+    let mut statement = db.prepare(indoc! {"
+        SELECT
+            id,
+            lyricsfile_id,
+            track_id,
+            source_hash,
+            source_lyricsfile,
+            provider,
+            provider_model,
+            target_language,
+            settings_hash,
+            status,
+            translated_lines_json,
+            translated_lrc,
+            error_message,
+            provider_metadata_json
+        FROM lyric_translations
+        WHERE track_id = ?
+        ORDER BY updated_at DESC, id DESC
+    "})?;
+    let mut rows = statement.query([track_id])?;
+    let mut translations = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        translations.push(LyricTranslation {
+            id: row.get("id")?,
+            lyricsfile_id: row.get("lyricsfile_id")?,
+            track_id: row.get("track_id")?,
+            source_hash: row.get("source_hash")?,
+            source_lyricsfile: row.get("source_lyricsfile")?,
+            provider: row.get("provider")?,
+            provider_model: row.get("provider_model")?,
+            target_language: row.get("target_language")?,
+            settings_hash: row.get("settings_hash")?,
+            status: row.get("status")?,
+            translated_lines_json: row.get("translated_lines_json")?,
+            translated_lrc: row.get("translated_lrc")?,
+            error_message: row.get("error_message")?,
+            provider_metadata_json: row.get("provider_metadata_json")?,
+        });
+    }
+
+    Ok(translations)
 }
 
 pub fn find_artist(name: &str, db: &Connection) -> Result<i64> {
@@ -256,7 +543,19 @@ pub fn get_track_by_id(id: i64, db: &Connection) -> Result<PersistentTrack> {
       albums.image_path,
       lyricsfiles.id AS lyricsfile_id,
       lyricsfiles.lyricsfile,
-      COALESCE(lyricsfiles.instrumental, 0) AS instrumental
+      COALESCE(lyricsfiles.instrumental, 0) AS instrumental,
+      COALESCE((
+        SELECT CASE status
+          WHEN 'succeeded' THEN 'translated'
+          WHEN 'pending' THEN 'pending'
+          WHEN 'failed' THEN 'failed'
+          ELSE 'none'
+        END
+        FROM lyric_translations
+        WHERE lyric_translations.track_id = tracks.id
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+      ), 'none') AS translation_status
     FROM tracks
     JOIN albums ON tracks.album_id = albums.id
     JOIN artists ON tracks.artist_id = artists.id
@@ -287,6 +586,7 @@ pub fn get_track_by_id(id: i64, db: &Connection) -> Result<PersistentTrack> {
             lyricsfile_id: row.get("lyricsfile_id")?,
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
+            translation_status: row.get("translation_status")?,
         })
     })?;
     Ok(row)
@@ -611,6 +911,7 @@ pub fn get_tracks(db: &Connection) -> Result<Vec<PersistentTrack>> {
             lyricsfile_id: row.get("lyricsfile_id")?,
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
+            translation_status: "none".to_string(),
         };
 
         tracks.push(track);
@@ -922,6 +1223,7 @@ pub fn get_album_tracks(album_id: i64, db: &Connection) -> Result<Vec<Persistent
             lyricsfile_id: row.get("lyricsfile_id")?,
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
+            translation_status: "none".to_string(),
         };
 
         tracks.push(track);
@@ -1004,6 +1306,7 @@ pub fn get_artist_tracks(artist_id: i64, db: &Connection) -> Result<Vec<Persiste
             lyricsfile_id: row.get("lyricsfile_id")?,
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
+            translation_status: "none".to_string(),
         };
 
         tracks.push(track);
@@ -1495,10 +1798,161 @@ pub fn find_tracks_by_metadata(
             lyricsfile_id: row.get("lyricsfile_id")?,
             image_path: row.get("image_path")?,
             instrumental: is_instrumental,
+            translation_status: "none".to_string(),
         };
 
         tracks.push(track);
     }
 
     Ok(tracks)
+}
+
+#[cfg(test)]
+mod translation_db_tests {
+    use super::*;
+
+    fn setup_db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(indoc! {"
+            CREATE TABLE lyric_translations (
+                id INTEGER PRIMARY KEY,
+                lyricsfile_id INTEGER NOT NULL,
+                track_id INTEGER,
+                source_hash TEXT NOT NULL,
+                source_lyricsfile TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                provider_model TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                settings_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                translated_lines_json TEXT,
+                translated_lrc TEXT,
+                error_message TEXT,
+                provider_metadata_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(lyricsfile_id, source_hash, provider, provider_model, target_language, settings_hash)
+            );
+        "})
+        .unwrap();
+        db
+    }
+
+    fn successful_translation(source_hash: &str) -> LyricTranslationUpsert {
+        LyricTranslationUpsert {
+            lyricsfile_id: 7,
+            track_id: Some(42),
+            source_hash: source_hash.to_string(),
+            source_lyricsfile: "version: '1.0'\nlines: []".to_string(),
+            provider: "gemini".to_string(),
+            provider_model: "gemini-flash-latest".to_string(),
+            target_language: "English".to_string(),
+            settings_hash: "settings-a".to_string(),
+            status: "succeeded".to_string(),
+            translated_lines_json: Some(
+                r#"{"lines":[{"source_index":0,"translated_text":"Hello"}]}"#.to_string(),
+            ),
+            translated_lrc: Some("[00:01.00]Hello".to_string()),
+            error_message: None,
+            provider_metadata_json: Some(r#"{"requestedModel":"gemini-flash-latest"}"#.to_string()),
+        }
+    }
+
+    #[test]
+    fn upserts_and_finds_current_successful_translation() {
+        let db = setup_db();
+        let input = successful_translation("source-a");
+
+        let id = upsert_lyric_translation(&input, &db).unwrap();
+        let found = get_current_lyric_translation(
+            7,
+            "source-a",
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(found.id, id);
+        assert_eq!(found.status, "succeeded");
+        assert_eq!(found.translated_lrc.as_deref(), Some("[00:01.00]Hello"));
+    }
+
+    #[test]
+    fn does_not_return_stale_translation_for_changed_source_hash() {
+        let db = setup_db();
+        upsert_lyric_translation(&successful_translation("source-a"), &db).unwrap();
+
+        let found = get_current_lyric_translation(
+            7,
+            "source-b",
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap();
+
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn reports_track_translation_status_from_latest_attempt() {
+        let db = setup_db();
+        let mut failed = successful_translation("source-a");
+        failed.status = "failed".to_string();
+        failed.error_message = Some("provider error".to_string());
+        failed.translated_lines_json = None;
+        failed.translated_lrc = None;
+
+        upsert_lyric_translation(&failed, &db).unwrap();
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "failed");
+
+        upsert_lyric_translation(&successful_translation("source-a"), &db).unwrap();
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "translated");
+    }
+
+    #[test]
+    fn config_includes_translation_defaults() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(indoc! {"
+            CREATE TABLE config_data (
+                id INTEGER PRIMARY KEY,
+                skip_tracks_with_synced_lyrics BOOLEAN DEFAULT 0,
+                skip_tracks_with_plain_lyrics BOOLEAN DEFAULT 0,
+                show_line_count BOOLEAN DEFAULT 1,
+                try_embed_lyrics BOOLEAN DEFAULT 0,
+                theme_mode TEXT DEFAULT 'auto',
+                lrclib_instance TEXT DEFAULT 'https://lrclib.net',
+                volume REAL DEFAULT 1.0,
+                translation_auto_enabled BOOLEAN DEFAULT 0,
+                translation_target_language TEXT DEFAULT 'English',
+                translation_provider TEXT DEFAULT 'gemini',
+                translation_export_mode TEXT DEFAULT 'original',
+                translation_gemini_api_key TEXT DEFAULT '',
+                translation_gemini_model TEXT DEFAULT 'gemini-flash-latest',
+                translation_deepl_api_key TEXT DEFAULT '',
+                translation_google_api_key TEXT DEFAULT '',
+                translation_microsoft_api_key TEXT DEFAULT '',
+                translation_microsoft_region TEXT DEFAULT '',
+                translation_openai_base_url TEXT DEFAULT '',
+                translation_openai_api_key TEXT DEFAULT '',
+                translation_openai_model TEXT DEFAULT ''
+            );
+            INSERT INTO config_data (id) VALUES (1);
+        "})
+            .unwrap();
+
+        let config = get_config(&db).unwrap();
+
+        assert!(!config.translation_auto_enabled);
+        assert_eq!(config.translation_target_language, "English");
+        assert_eq!(config.translation_provider, "gemini");
+        assert_eq!(config.translation_export_mode, "original");
+        assert_eq!(config.translation_gemini_model, "gemini-flash-latest");
+    }
 }

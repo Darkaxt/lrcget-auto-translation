@@ -377,10 +377,10 @@ mod tests {
     fn test_build_sidecar_path() {
         let track_path = "/music/artist/album/song.mp3";
         let txt_path = build_sidecar_path(track_path, "txt").unwrap();
-        assert_eq!(txt_path.to_str().unwrap(), "/music/artist/album/song.txt");
+        assert_eq!(txt_path, Path::new("/music/artist/album").join("song.txt"));
 
         let lrc_path = build_sidecar_path(track_path, "lrc").unwrap();
-        assert_eq!(lrc_path.to_str().unwrap(), "/music/artist/album/song.lrc");
+        assert_eq!(lrc_path, Path::new("/music/artist/album").join("song.lrc"));
     }
 
     #[test]

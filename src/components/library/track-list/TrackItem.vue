@@ -50,7 +50,7 @@
 
     <!-- Lyrics indication -->
     <div class="flex-none w-[10%] flex items-center justify-center p-1" @click="playTrack(track)">
-      <div v-if="track">
+      <div v-if="track" class="flex flex-col items-center gap-1">
         <span
           v-if="lyricsStatus === 'instrumental'"
           class="text-gray-200 font-bold text-[0.67rem] bg-gray-500 rounded px-1 py-0.5"
@@ -65,6 +65,21 @@
           v-else-if="lyricsStatus === 'plain'"
           class="text-gray-200 font-bold text-[0.67rem] bg-gray-800 rounded px-1 py-0.5"
           >Plain</span
+        >
+        <span
+          v-if="translationStatus === 'translated'"
+          class="text-blue-100 font-bold text-[0.67rem] bg-blue-800 rounded px-1 py-0.5"
+          >Translated</span
+        >
+        <span
+          v-else-if="translationStatus === 'pending'"
+          class="text-yellow-100 font-bold text-[0.67rem] bg-yellow-700 rounded px-1 py-0.5"
+          >Pending</span
+        >
+        <span
+          v-else-if="translationStatus === 'failed'"
+          class="text-red-100 font-bold text-[0.67rem] bg-red-800 rounded px-1 py-0.5"
+          >Failed</span
         >
       </div>
     </div>
@@ -88,6 +103,14 @@
         <button class="track-button" @click="searchLyrics(track)">
           <TextSearch />
         </button>
+        <button
+          class="track-button"
+          :disabled="isTranslating"
+          title="Translate lyrics"
+          @click="translateLyrics(track)"
+        >
+          <Translate />
+        </button>
         <button class="track-button" @click="openEditLyricsV2(track)">
           <PlaylistEdit />
         </button>
@@ -102,6 +125,7 @@ import Pause from '~icons/mdi/pause'
 import TextSearch from '~icons/mdi/text-search'
 import PlaylistEdit from '~icons/mdi/playlist-edit'
 import Replay from '~icons/mdi/replay'
+import Translate from '~icons/mdi/translate'
 import { humanDuration } from '../../../utils/human-duration.js'
 import { useSearchLyrics } from '../../../composables/search-lyrics.js'
 import { useEditLyricsV2 } from '../../../composables/edit-lyrics-v2.js'
@@ -118,6 +142,7 @@ const { searchLyrics } = useSearchLyrics()
 const { editLyricsV2, editingAudioSource } = useEditLyricsV2()
 const props = defineProps(['trackId', 'isShowTrackNumber'])
 const track = ref(null)
+const isTranslating = ref(false)
 
 const isPlaying = computed(() => {
   return playingTrack.value && track.value && playingTrack.value.id === track.value.id
@@ -142,6 +167,27 @@ const lyricsStatus = computed(() => {
   }
   return null
 })
+
+const translationStatus = computed(() => {
+  return track.value?.translation_status || 'none'
+})
+
+const translateLyrics = async track => {
+  if (!track || isTranslating.value) {
+    return
+  }
+
+  isTranslating.value = true
+  try {
+    await invoke('translate_track_lyrics', { trackId: track.id })
+    track.value = await invoke('get_track', { trackId: props.trackId })
+  } catch (error) {
+    console.error('Failed to translate lyrics:', error)
+    track.value = await invoke('get_track', { trackId: props.trackId })
+  } finally {
+    isTranslating.value = false
+  }
+}
 
 const openEditLyricsV2 = track => {
   const audioSource = {

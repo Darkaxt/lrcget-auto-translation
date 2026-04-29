@@ -19,6 +19,7 @@ pub struct PlayableTrack {
     pub instrumental: bool,
     pub lyricsfile: Option<String>,
     pub lyricsfile_id: Option<i64>, // ID from lyricsfiles table
+    pub translation_status: String,
 }
 
 impl From<PersistentTrack> for PlayableTrack {
@@ -37,6 +38,7 @@ impl From<PersistentTrack> for PlayableTrack {
             instrumental: track.instrumental,
             lyricsfile: track.lyricsfile,
             lyricsfile_id: track.lyricsfile_id,
+            translation_status: track.translation_status,
         }
     }
 }
@@ -60,6 +62,7 @@ pub struct PersistentTrack {
     pub lyricsfile_id: Option<i64>, // ID from lyricsfiles table (null if no lyricsfile exists)
     pub duration: f64,
     pub instrumental: bool,
+    pub translation_status: String,
 }
 
 #[derive(Serialize)]
@@ -89,4 +92,17 @@ pub struct PersistentConfig {
     pub theme_mode: String,
     pub lrclib_instance: String,
     pub volume: f64,
+    pub translation_auto_enabled: bool,
+    pub translation_target_language: String,
+    pub translation_provider: String,
+    pub translation_export_mode: String,
+    pub translation_gemini_api_key: String,
+    pub translation_gemini_model: String,
+    pub translation_deepl_api_key: String,
+    pub translation_google_api_key: String,
+    pub translation_microsoft_api_key: String,
+    pub translation_microsoft_region: String,
+    pub translation_openai_base_url: String,
+    pub translation_openai_api_key: String,
+    pub translation_openai_model: String,
 }

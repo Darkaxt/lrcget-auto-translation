@@ -13,14 +13,18 @@ pub mod persistent_entities;
 pub mod player;
 pub mod scanner;
 pub mod state;
+pub mod translation;
 pub mod utils;
 
-use persistent_entities::{PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack, PlayableTrack};
+use persistent_entities::{
+    PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack, PlayableTrack,
+};
 use player::Player;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use state::{AppState, Notify, NotifyType, ServiceAccess};
 use tauri::{AppHandle, Emitter, Manager, State};
+use translation::{LyricTranslation, LyricTranslationUpsert, TranslationRequest};
 
 struct ResolvedLyricsPayload {
     plain_lyrics: String,
@@ -201,6 +205,19 @@ async fn set_config(
     theme_mode: &str,
     lrclib_instance: &str,
     volume: f64,
+    translation_auto_enabled: bool,
+    translation_target_language: &str,
+    translation_provider: &str,
+    translation_export_mode: &str,
+    translation_gemini_api_key: &str,
+    translation_gemini_model: &str,
+    translation_deepl_api_key: &str,
+    translation_google_api_key: &str,
+    translation_microsoft_api_key: &str,
+    translation_microsoft_region: &str,
+    translation_openai_base_url: &str,
+    translation_openai_api_key: &str,
+    translation_openai_model: &str,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn_guard = app_state.db.lock().unwrap();
@@ -213,6 +230,79 @@ async fn set_config(
         theme_mode,
         lrclib_instance,
         volume,
+        translation_auto_enabled,
+        translation_target_language,
+        translation_provider,
+        translation_export_mode,
+        translation_gemini_api_key,
+        translation_gemini_model,
+        translation_deepl_api_key,
+        translation_google_api_key,
+        translation_microsoft_api_key,
+        translation_microsoft_region,
+        translation_openai_base_url,
+        translation_openai_api_key,
+        translation_openai_model,
+        conn,
+    )
+    .map_err(|err| err.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_translation_config(
+    app_state: State<'_, AppState>,
+) -> Result<PersistentConfig, String> {
+    get_config(app_state).await
+}
+
+#[tauri::command]
+async fn set_translation_config(
+    translation_auto_enabled: bool,
+    translation_target_language: &str,
+    translation_provider: &str,
+    translation_export_mode: &str,
+    translation_gemini_api_key: &str,
+    translation_gemini_model: &str,
+    translation_deepl_api_key: &str,
+    translation_google_api_key: &str,
+    translation_microsoft_api_key: &str,
+    translation_microsoft_region: &str,
+    translation_openai_base_url: &str,
+    translation_openai_api_key: &str,
+    translation_openai_model: &str,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config = {
+        let conn_guard = app_state.db.lock().unwrap();
+        let conn = conn_guard.as_ref().unwrap();
+        db::get_config(conn).map_err(|err| err.to_string())?
+    };
+
+    let conn_guard = app_state.db.lock().unwrap();
+    let conn = conn_guard.as_ref().unwrap();
+    db::set_config(
+        config.skip_tracks_with_synced_lyrics,
+        config.skip_tracks_with_plain_lyrics,
+        config.show_line_count,
+        config.try_embed_lyrics,
+        &config.theme_mode,
+        &config.lrclib_instance,
+        config.volume,
+        translation_auto_enabled,
+        translation_target_language,
+        translation_provider,
+        translation_export_mode,
+        translation_gemini_api_key,
+        translation_gemini_model,
+        translation_deepl_api_key,
+        translation_google_api_key,
+        translation_microsoft_api_key,
+        translation_microsoft_region,
+        translation_openai_base_url,
+        translation_openai_api_key,
+        translation_openai_model,
         conn,
     )
     .map_err(|err| err.to_string())?;
@@ -411,8 +501,8 @@ async fn find_matching_tracks(
     }
 
     // Otherwise, search for partial matches (title only match with duration if provided)
-    let partial_matches =
-        db::find_tracks_by_metadata(&title, None, None, duration, conn).map_err(|err| err.to_string())?;
+    let partial_matches = db::find_tracks_by_metadata(&title, None, None, duration, conn)
+        .map_err(|err| err.to_string())?;
 
     // Filter out tracks where artist or album don't match at all (still partial but relevant)
     let normalized_artist = utils::prepare_input(&artist_name);
@@ -444,8 +534,8 @@ async fn find_matching_tracks(
 async fn get_audio_metadata(file_path: String) -> Result<AudioMetadataResponse, String> {
     let path = std::path::Path::new(&file_path);
 
-    let metadata = scanner::metadata::TrackMetadata::from_path(path)
-        .map_err(|err| err.to_string())?;
+    let metadata =
+        scanner::metadata::TrackMetadata::from_path(path).map_err(|err| err.to_string())?;
 
     Ok(AudioMetadataResponse {
         file_path: metadata.file_path,
@@ -589,6 +679,214 @@ async fn get_artist_track_ids(
 }
 
 #[tauri::command]
+async fn list_track_translations(
+    track_id: i64,
+    app_handle: AppHandle,
+) -> Result<Vec<LyricTranslation>, String> {
+    app_handle
+        .db(|db| db::list_lyric_translations_for_track(track_id, db))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn translate_track_lyrics(
+    track_id: i64,
+    app_handle: AppHandle,
+) -> Result<LyricTranslation, String> {
+    translate_track_lyrics_internal(track_id, app_handle, true).await
+}
+
+#[tauri::command]
+async fn test_translation_provider(app_handle: AppHandle) -> Result<String, String> {
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+    let source_lrc = "[00:01.00]Hello world".to_string();
+    let request = TranslationRequest {
+        title: "Provider test".to_string(),
+        album_name: String::new(),
+        artist_name: "LRCGET".to_string(),
+        source_language: Some("English".to_string()),
+        target_language: translation::target_language_from_config(&config),
+        source_lrc: source_lrc.clone(),
+    };
+    let response_json = translation::request_translation(&config, &request)
+        .await
+        .map_err(|err| err.to_string())?;
+    translation::validate_translation_lines(&source_lrc, &response_json)
+        .map_err(|err| err.to_string())?;
+
+    Ok("Provider test succeeded".to_string())
+}
+
+fn maybe_spawn_auto_translation(track_id: i64, app_handle: AppHandle) {
+    let enabled = app_handle
+        .db(|db| db::get_config(db).map(|config| config.translation_auto_enabled))
+        .unwrap_or(false);
+
+    if !enabled {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            translate_track_lyrics_internal(track_id, app_handle.clone(), false).await
+        {
+            eprintln!("Auto-translation failed for track {}: {}", track_id, error);
+        }
+        let _ = app_handle.emit("reload-track-id", track_id);
+    });
+}
+
+async fn translate_track_lyrics_internal(
+    track_id: i64,
+    app_handle: AppHandle,
+    force: bool,
+) -> Result<LyricTranslation, String> {
+    let track = app_handle
+        .db(|db| db::get_track_by_id(track_id, db))
+        .map_err(|err| err.to_string())?;
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+
+    let lyricsfile_id = track
+        .lyricsfile_id
+        .ok_or_else(|| "No lyricsfile is stored for this track".to_string())?;
+    let lyricsfile_content = track
+        .lyricsfile
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "No lyrics available to translate".to_string())?;
+    let parsed =
+        lyricsfile::parse_lyricsfile(&lyricsfile_content).map_err(|err| err.to_string())?;
+    if parsed.is_instrumental {
+        return Err("Instrumental tracks cannot be translated".to_string());
+    }
+    let source_lrc = parsed
+        .synced_lyrics
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "Only synced lyrics can be auto-translated in this version".to_string())?;
+
+    let provider = config.translation_provider.clone();
+    let provider_model = translation::provider_model_from_config(&config);
+    let target_language = translation::target_language_from_config(&config);
+    let source_hash = translation::lyrics_source_hash(&lyricsfile_content);
+    let settings_hash = translation::settings_hash_from_config(&config);
+
+    if !force {
+        if let Some(existing) = app_handle
+            .db(|db| {
+                db::get_current_lyric_translation(
+                    lyricsfile_id,
+                    &source_hash,
+                    &provider,
+                    &provider_model,
+                    &target_language,
+                    &settings_hash,
+                    db,
+                )
+            })
+            .map_err(|err| err.to_string())?
+        {
+            return Ok(existing);
+        }
+    }
+
+    let pending = LyricTranslationUpsert {
+        lyricsfile_id,
+        track_id: Some(track_id),
+        source_hash: source_hash.clone(),
+        source_lyricsfile: lyricsfile_content.clone(),
+        provider: provider.clone(),
+        provider_model: provider_model.clone(),
+        target_language: target_language.clone(),
+        settings_hash: settings_hash.clone(),
+        status: "pending".to_string(),
+        translated_lines_json: None,
+        translated_lrc: None,
+        error_message: None,
+        provider_metadata_json: None,
+    };
+    let _ = app_handle
+        .db(|db| db::upsert_lyric_translation(&pending, db))
+        .map_err(|err| err.to_string())?;
+    let _ = app_handle.emit("reload-track-id", track_id);
+
+    let request = TranslationRequest {
+        title: track.title.clone(),
+        album_name: track.album_name.clone(),
+        artist_name: track.artist_name.clone(),
+        source_language: None,
+        target_language: target_language.clone(),
+        source_lrc: source_lrc.clone(),
+    };
+
+    let result = translation::request_translation(&config, &request)
+        .await
+        .and_then(|response_json| {
+            translation::validate_translation_lines(&source_lrc, &response_json)?;
+            let translated_lrc = translation::build_translated_lrc(
+                &source_lrc,
+                &response_json,
+                translation::TranslationExportMode::Translation,
+            )?;
+            Ok((response_json, translated_lrc))
+        });
+
+    let upsert = match result {
+        Ok((response_json, translated_lrc)) => LyricTranslationUpsert {
+            status: "succeeded".to_string(),
+            translated_lines_json: Some(response_json),
+            translated_lrc: Some(translated_lrc),
+            error_message: None,
+            provider_metadata_json: Some(
+                serde_json::json!({
+                    "requestedModel": provider_model,
+                    "provider": provider,
+                })
+                .to_string(),
+            ),
+            ..pending
+        },
+        Err(error) => LyricTranslationUpsert {
+            status: "failed".to_string(),
+            error_message: Some(error.to_string()),
+            ..pending
+        },
+    };
+
+    let id = app_handle
+        .db(|db| db::upsert_lyric_translation(&upsert, db))
+        .map_err(|err| err.to_string())?;
+    let _ = app_handle.emit("reload-track-id", track_id);
+
+    if upsert.status == "failed" {
+        return Err(upsert
+            .error_message
+            .unwrap_or_else(|| "Translation failed".to_string()));
+    }
+
+    Ok(LyricTranslation {
+        id,
+        lyricsfile_id: upsert.lyricsfile_id,
+        track_id: upsert.track_id,
+        source_hash: upsert.source_hash,
+        source_lyricsfile: upsert.source_lyricsfile,
+        provider: upsert.provider,
+        provider_model: upsert.provider_model,
+        target_language: upsert.target_language,
+        settings_hash: upsert.settings_hash,
+        status: upsert.status,
+        translated_lines_json: upsert.translated_lines_json,
+        translated_lrc: upsert.translated_lrc,
+        error_message: upsert.error_message,
+        provider_metadata_json: upsert.provider_metadata_json,
+    })
+}
+
+#[tauri::command]
 async fn download_lyrics(track_id: i64, app_handle: AppHandle) -> Result<String, String> {
     let track = app_handle
         .db(|db| db::get_track_by_id(track_id, db))
@@ -641,6 +939,7 @@ async fn download_lyrics(track_id: i64, app_handle: AppHandle) -> Result<String,
         .map_err(|err| err.to_string())?;
 
     app_handle.emit("reload-track-id", track_id).unwrap();
+    maybe_spawn_auto_translation(track_id, app_handle.clone());
 
     if resolved.is_instrumental {
         Ok("Marked track as instrumental".to_owned())
@@ -698,9 +997,13 @@ async fn apply_lyrics(
         })
         .map_err(|err| err.to_string())?;
 
-    std::thread::spawn(move || {
-        app_handle.emit("reload-track-id", track_id).unwrap();
+    std::thread::spawn({
+        let app_handle = app_handle.clone();
+        move || {
+            app_handle.emit("reload-track-id", track_id).unwrap();
+        }
     });
+    maybe_spawn_auto_translation(track_id, app_handle.clone());
 
     if resolved.is_instrumental {
         Ok("Marked track as instrumental".to_owned())
@@ -804,9 +1107,7 @@ async fn prepare_lrclib_lyricsfile(
 
     // Check if we already have this lyricsfile in the database
     let existing = app_handle
-        .db(|db: &Connection| {
-            db::get_lyricsfile_by_lrclib(&lrclib_instance, lrclib_id, db)
-        })
+        .db(|db: &Connection| db::get_lyricsfile_by_lrclib(&lrclib_instance, lrclib_id, db))
         .map_err(|err| err.to_string())?;
 
     if let Some((lyricsfile_id, lyricsfile)) = existing {
@@ -1184,6 +1485,7 @@ async fn play_track(
             instrumental: false,
             lyricsfile: None,
             lyricsfile_id: None,
+            translation_status: "none".to_string(),
         }
     } else {
         return Err("Either track_id or file_path must be provided".to_string());
@@ -1229,6 +1531,66 @@ async fn export_lyrics(
     Ok(export::export_track(&track, &parsed, &export_formats))
 }
 
+fn resolve_configured_export_lyrics(
+    track: &PersistentTrack,
+    config: &PersistentConfig,
+    db: &Connection,
+) -> Result<Option<lyricsfile::ParsedLyricsfile>, String> {
+    let lyricsfile_content = track
+        .lyricsfile
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "No lyrics available for export".to_owned())?;
+    let parsed_original =
+        lyricsfile::parse_lyricsfile(&lyricsfile_content).map_err(|err| err.to_string())?;
+    let export_mode = translation::export_mode_from_str(&config.translation_export_mode);
+
+    if export_mode == translation::TranslationExportMode::Original
+        || parsed_original.is_instrumental
+    {
+        return Ok(Some(parsed_original));
+    }
+
+    let source_lrc = parsed_original
+        .synced_lyrics
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "No synced lyrics available for translated export".to_string())?;
+    let lyricsfile_id = track
+        .lyricsfile_id
+        .ok_or_else(|| "No lyricsfile ID available for translated export".to_string())?;
+    let source_hash = translation::lyrics_source_hash(&lyricsfile_content);
+    let provider_model = translation::provider_model_from_config(config);
+    let settings_hash = translation::settings_hash_from_config(config);
+
+    let translation = db::get_current_lyric_translation(
+        lyricsfile_id,
+        &source_hash,
+        &config.translation_provider,
+        &provider_model,
+        &translation::target_language_from_config(config),
+        &settings_hash,
+        db,
+    )
+    .map_err(|err| err.to_string())?;
+
+    let translation = match translation {
+        Some(translation) => translation,
+        None => return Ok(None),
+    };
+    let translations_json = translation
+        .translated_lines_json
+        .ok_or_else(|| "Current translation row has no translated line payload".to_string())?;
+    let lrc = translation::build_translated_lrc(&source_lrc, &translations_json, export_mode)
+        .map_err(|err| err.to_string())?;
+
+    Ok(Some(lyricsfile::ParsedLyricsfile {
+        plain_lyrics: Some(utils::strip_timestamp(&lrc)),
+        synced_lyrics: Some(lrc),
+        is_instrumental: false,
+    }))
+}
+
 /// Detail for a single format export result
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1269,14 +1631,11 @@ async fn export_track_lyrics(
     let track = app_handle
         .db(|db| db::get_track_by_id(track_id, db))
         .map_err(|err| err.to_string())?;
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
 
-    // Get lyrics from lyricsfile column
-    let lyricsfile_content = track
-        .lyricsfile
-        .clone()
-        .filter(|content| !content.trim().is_empty());
-
-    if lyricsfile_content.is_none() {
+    if track.lyricsfile.is_none() {
         return Ok(TrackExportSummary {
             success: true,
             exported: 0,
@@ -1287,8 +1646,24 @@ async fn export_track_lyrics(
         });
     }
 
-    let parsed = lyricsfile::parse_lyricsfile(&lyricsfile_content.unwrap())
+    let parsed = app_handle
+        .db(|db| resolve_configured_export_lyrics(&track, &config, db))
         .map_err(|err| err.to_string())?;
+
+    let parsed = match parsed {
+        Some(parsed) => parsed,
+        None => {
+            return Ok(TrackExportSummary {
+                success: true,
+                exported: 0,
+                skipped: formats.len() as i32,
+                errors: 0,
+                message: "No matching translation available for selected export mode".to_owned(),
+                details: vec![],
+            });
+        }
+    };
+
     let export_formats = formats.into_iter().map(Into::into).collect::<Vec<_>>();
 
     let results = export::export_track(&track, &parsed, &export_formats);
@@ -1449,8 +1824,7 @@ fn drain_notifications(app_state: tauri::State<AppState>) -> Vec<Notify> {
 
 #[tauri::command]
 async fn read_text_file(file_path: String) -> Result<String, String> {
-    std::fs::read_to_string(&file_path)
-        .map_err(|err| format!("Failed to read file: {}", err))
+    std::fs::read_to_string(&file_path).map_err(|err| format!("Failed to read file: {}", err))
 }
 
 #[tokio::main]
@@ -1531,6 +1905,8 @@ async fn main() {
             get_init,
             get_config,
             set_config,
+            get_translation_config,
+            set_translation_config,
             uninitialize_library,
             full_scan_library,
             scan_library,
@@ -1547,6 +1923,9 @@ async fn main() {
             get_artist_tracks,
             get_album_track_ids,
             get_artist_track_ids,
+            list_track_translations,
+            translate_track_lyrics,
+            test_translation_provider,
             download_lyrics,
             apply_lyrics,
             retrieve_lyrics,
