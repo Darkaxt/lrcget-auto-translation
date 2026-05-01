@@ -10,6 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+target
+src-tauri/target
+src-tauri/target-*
+src-tauri/gen
+tmp-lrcget-*.png
+__pycache__
+*.pyc
 *.local
 
 # Editor directories and files

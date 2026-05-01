@@ -136,7 +136,7 @@ import { useSearchLyrics } from '../../../composables/search-lyrics.js'
 import { useEditLyricsV2 } from '../../../composables/edit-lyrics-v2.js'
 import Equalizer from '@/components/icons/Equalizer.vue'
 import { parseLyricsfile } from '@/utils/lyricsfile.js'
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePlayer } from '@/composables/player.js'
@@ -150,6 +150,14 @@ const { editLyricsV2, editingAudioSource } = useEditLyricsV2()
 const props = defineProps(['trackId', 'isShowTrackNumber'])
 const track = ref(null)
 const isTranslating = ref(false)
+
+const loadTrack = async () => {
+  const trackId = props.trackId
+  const loadedTrack = await invoke('get_track', { trackId })
+  if (props.trackId === trackId) {
+    track.value = loadedTrack
+  }
+}
 
 const isPlaying = computed(() => {
   return playingTrack.value && track.value && playingTrack.value.id === track.value.id
@@ -228,15 +236,22 @@ const openEditLyricsV2 = track => {
 let unlisten = null
 
 onMounted(async () => {
-  track.value = await invoke('get_track', { trackId: props.trackId })
+  await loadTrack()
 
   unlisten = await listen('reload-track-id', async event => {
     const payload = event.payload
-    if (track.value && track.value.id === payload) {
-      track.value = await invoke('get_track', { trackId: props.trackId })
+    if (props.trackId === payload) {
+      await loadTrack()
     }
   })
 })
+
+watch(
+  () => props.trackId,
+  async () => {
+    await loadTrack()
+  }
+)
 
 onUnmounted(() => {
   if (unlisten) {

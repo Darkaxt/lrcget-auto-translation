@@ -13,6 +13,7 @@ use include_dir::{include_dir, Dir};
 use indoc::indoc;
 use rusqlite::{named_params, params, Connection, OptionalExtension};
 use rusqlite_migration::Migrations;
+use serde::Serialize;
 use std::fs;
 use tauri::{AppHandle, Manager};
 
@@ -530,6 +531,138 @@ pub fn get_current_lyric_translation(
     )
     .optional()
     .map_err(Into::into)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreparedTranslationQueue {
+    pub queued_track_ids: Vec<i64>,
+    pub queued_count: usize,
+    pub skipped_same_language_count: usize,
+    pub already_current_count: usize,
+    #[serde(skip_serializing)]
+    pub changed_track_ids: Vec<i64>,
+}
+
+pub fn prepare_existing_lyrics_translation_queue(
+    provider: &str,
+    provider_model: &str,
+    target_language: &str,
+    settings_hash: &str,
+    db: &Connection,
+) -> Result<PreparedTranslationQueue> {
+    let candidate_ids = get_track_ids_with_synced_lyrics(db)?;
+    let mut prepared = PreparedTranslationQueue {
+        queued_track_ids: Vec::new(),
+        queued_count: 0,
+        skipped_same_language_count: 0,
+        already_current_count: 0,
+        changed_track_ids: Vec::new(),
+    };
+
+    for track_id in candidate_ids {
+        let track = get_track_by_id(track_id, db)?;
+        let Some(lyricsfile_id) = track.lyricsfile_id else {
+            continue;
+        };
+        let Some(lyricsfile_content) = track
+            .lyricsfile
+            .as_deref()
+            .filter(|content| !content.trim().is_empty())
+        else {
+            continue;
+        };
+        let parsed = match parse_lyricsfile(lyricsfile_content) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if parsed.is_instrumental {
+            continue;
+        }
+        let Some(source_lrc) = parsed
+            .synced_lyrics
+            .as_deref()
+            .map(str::trim)
+            .filter(|content| !content.is_empty())
+        else {
+            continue;
+        };
+
+        let source_hash = translation::lyrics_source_hash(lyricsfile_content);
+        let existing = get_current_lyric_translation(
+            lyricsfile_id,
+            &source_hash,
+            provider,
+            provider_model,
+            target_language,
+            settings_hash,
+            db,
+        )?;
+
+        if existing.is_some() {
+            prepared.already_current_count += 1;
+            continue;
+        }
+
+        if let Some(skip) = translation::same_language_skip_decision(source_lrc, target_language)? {
+            let message = format!(
+                "Source lyrics are already {}; translation skipped.",
+                skip.target_language
+            );
+            let skipped = LyricTranslationUpsert {
+                lyricsfile_id,
+                track_id: Some(track_id),
+                source_hash,
+                source_lyricsfile: lyricsfile_content.to_string(),
+                provider: provider.to_string(),
+                provider_model: provider_model.to_string(),
+                target_language: target_language.to_string(),
+                settings_hash: settings_hash.to_string(),
+                status: TRANSLATION_STATUS_SKIPPED_SAME_LANGUAGE.to_string(),
+                translated_lines_json: None,
+                translated_lrc: None,
+                error_message: Some(message),
+                provider_metadata_json: Some(
+                    serde_json::json!({
+                        "skipReason": skip.reason,
+                        "detectedLanguage": skip.detected_language,
+                        "detectedLanguageCode": skip.detected_language_code,
+                        "targetLanguage": skip.target_language,
+                        "targetLanguageCode": skip.target_language_code,
+                        "confidence": skip.confidence,
+                        "prepareReason": "source_language_matches_target"
+                    })
+                    .to_string(),
+                ),
+            };
+            upsert_lyric_translation(&skipped, db)?;
+            prepared.skipped_same_language_count += 1;
+            prepared.changed_track_ids.push(track_id);
+            continue;
+        }
+
+        let pending = LyricTranslationUpsert {
+            lyricsfile_id,
+            track_id: Some(track_id),
+            source_hash,
+            source_lyricsfile: lyricsfile_content.to_string(),
+            provider: provider.to_string(),
+            provider_model: provider_model.to_string(),
+            target_language: target_language.to_string(),
+            settings_hash: settings_hash.to_string(),
+            status: TRANSLATION_STATUS_PENDING.to_string(),
+            translated_lines_json: None,
+            translated_lrc: None,
+            error_message: None,
+            provider_metadata_json: None,
+        };
+        upsert_lyric_translation(&pending, db)?;
+        prepared.queued_track_ids.push(track_id);
+        prepared.queued_count += 1;
+        prepared.changed_track_ids.push(track_id);
+    }
+
+    Ok(prepared)
 }
 
 pub fn get_track_translation_status(track_id: i64, db: &Connection) -> Result<String> {
@@ -1956,7 +2089,7 @@ mod translation_db_tests {
     use super::*;
     use crate::lyricsfile::{build_lyricsfile, LyricsfileTrackMetadata};
 
-    fn setup_db() -> Connection {
+    fn setup_translation_db() -> Connection {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(indoc! {"
             CREATE TABLE lyric_translations (
@@ -1980,6 +2113,75 @@ mod translation_db_tests {
             );
         "})
         .unwrap();
+        db
+    }
+
+    fn setup_db() -> Connection {
+        setup_translation_db()
+    }
+
+    fn setup_library_db() -> Connection {
+        let db = setup_translation_db();
+        db.execute_batch(indoc! {"
+            CREATE TABLE artists (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                name_lower TEXT
+            );
+            CREATE TABLE albums (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                name_lower TEXT,
+                artist_id INTEGER,
+                image_path TEXT,
+                album_artist_name TEXT,
+                album_artist_name_lower TEXT
+            );
+            CREATE TABLE tracks (
+                id INTEGER PRIMARY KEY,
+                file_path TEXT,
+                file_name TEXT,
+                title TEXT,
+                title_lower TEXT,
+                album_id INTEGER,
+                artist_id INTEGER,
+                duration FLOAT,
+                track_number INTEGER,
+                file_size INTEGER,
+                modified_time INTEGER,
+                content_hash TEXT,
+                scan_status INTEGER DEFAULT 1
+            );
+            CREATE TABLE lyricsfiles (
+                id INTEGER PRIMARY KEY,
+                track_id INTEGER UNIQUE,
+                track_title TEXT,
+                track_title_lower TEXT,
+                track_album_name TEXT,
+                track_album_name_lower TEXT,
+                track_artist_name TEXT,
+                track_artist_name_lower TEXT,
+                track_duration FLOAT,
+                lyricsfile TEXT,
+                has_plain_lyrics BOOLEAN NOT NULL DEFAULT 0,
+                has_synced_lyrics BOOLEAN NOT NULL DEFAULT 0,
+                has_word_synced_lyrics BOOLEAN NOT NULL DEFAULT 0,
+                instrumental BOOLEAN NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO artists (id, name, name_lower) VALUES (1, 'Test Artist', 'test artist');
+            INSERT INTO albums (
+                id,
+                name,
+                name_lower,
+                artist_id,
+                image_path,
+                album_artist_name,
+                album_artist_name_lower
+            ) VALUES (1, 'Test Album', 'test album', 1, NULL, 'Test Artist', 'test artist');
+        "})
+            .unwrap();
         db
     }
 
@@ -2010,6 +2212,70 @@ mod translation_db_tests {
             Some(lrc),
         )
         .unwrap()
+    }
+
+    fn insert_synced_track(
+        db: &Connection,
+        track_id: i64,
+        lyricsfile_id: i64,
+        title: &str,
+        lrc: &str,
+    ) -> String {
+        let lyricsfile = lyricsfile_from_lrc(lrc);
+        db.execute(
+            indoc! {"
+                INSERT INTO tracks (
+                    id,
+                    file_path,
+                    file_name,
+                    title,
+                    title_lower,
+                    album_id,
+                    artist_id,
+                    duration,
+                    track_number,
+                    scan_status
+                ) VALUES (?, ?, ?, ?, ?, 1, 1, 180.0, ?, 1)
+            "},
+            (
+                track_id,
+                format!("C:/music/{}.flac", title),
+                format!("{}.flac", title),
+                title,
+                title.to_lowercase(),
+                track_id,
+            ),
+        )
+        .unwrap();
+        db.execute(
+            indoc! {"
+                INSERT INTO lyricsfiles (
+                    id,
+                    track_id,
+                    track_title,
+                    track_title_lower,
+                    track_album_name,
+                    track_album_name_lower,
+                    track_artist_name,
+                    track_artist_name_lower,
+                    track_duration,
+                    lyricsfile,
+                    has_plain_lyrics,
+                    has_synced_lyrics,
+                    has_word_synced_lyrics,
+                    instrumental
+                ) VALUES (?, ?, ?, ?, 'Test Album', 'test album', 'Test Artist', 'test artist', 180.0, ?, 1, 1, 0, 0)
+            "},
+            (
+                lyricsfile_id,
+                track_id,
+                title,
+                title.to_lowercase(),
+                &lyricsfile,
+            ),
+        )
+        .unwrap();
+        lyricsfile
     }
 
     #[test]
@@ -2101,6 +2367,217 @@ mod translation_db_tests {
         assert_eq!(
             get_track_translation_status(42, &db).unwrap(),
             "already_target_language"
+        );
+    }
+
+    #[test]
+    fn prepare_translation_queue_marks_english_as_skipped_without_queueing_provider() {
+        let db = setup_library_db();
+        let lrc = "[00:01.00]I wake again\n[00:02.00]You got me up to my old ways again\n[00:03.00]One by one, two by two\n[00:04.00]My walls come falling down\n[00:05.00]Was lost and now I'm found";
+        let lyricsfile = insert_synced_track(&db, 42, 7, "English Track", lrc);
+
+        let prepared = prepare_existing_lyrics_translation_queue(
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap();
+
+        assert!(prepared.queued_track_ids.is_empty());
+        assert_eq!(prepared.queued_count, 0);
+        assert_eq!(prepared.skipped_same_language_count, 1);
+        assert_eq!(prepared.already_current_count, 0);
+        assert_eq!(prepared.changed_track_ids, vec![42]);
+        assert_eq!(
+            get_track_translation_status(42, &db).unwrap(),
+            "already_target_language"
+        );
+
+        let found = get_current_lyric_translation(
+            7,
+            &translation::lyrics_source_hash(&lyricsfile),
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(found.status, "skipped_same_language");
+    }
+
+    #[test]
+    fn prepare_translation_queue_marks_korean_lyrics_pending_and_returns_track_id() {
+        let db = setup_library_db();
+        insert_synced_track(
+            &db,
+            42,
+            7,
+            "Korean Track",
+            "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:02.00]When I open my eyes in the morning\n[00:03.00]햇살에 눈 비비고 일어나고",
+        );
+
+        let prepared = prepare_existing_lyrics_translation_queue(
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.queued_track_ids, vec![42]);
+        assert_eq!(prepared.queued_count, 1);
+        assert_eq!(prepared.skipped_same_language_count, 0);
+        assert_eq!(prepared.already_current_count, 0);
+        assert_eq!(prepared.changed_track_ids, vec![42]);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "pending");
+    }
+
+    #[test]
+    fn prepare_translation_queue_does_not_requeue_current_success_or_skip_rows() {
+        let db = setup_library_db();
+        let lyricsfile = insert_synced_track(
+            &db,
+            42,
+            7,
+            "Already Done",
+            "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:02.00]햇살에 눈 비비고 일어나고",
+        );
+        let mut existing = successful_translation(&translation::lyrics_source_hash(&lyricsfile));
+        existing.lyricsfile_id = 7;
+        existing.track_id = Some(42);
+        upsert_lyric_translation(&existing, &db).unwrap();
+
+        let prepared = prepare_existing_lyrics_translation_queue(
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap();
+
+        assert!(prepared.queued_track_ids.is_empty());
+        assert_eq!(prepared.queued_count, 0);
+        assert_eq!(prepared.skipped_same_language_count, 0);
+        assert_eq!(prepared.already_current_count, 1);
+        assert!(prepared.changed_track_ids.is_empty());
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "translated");
+    }
+
+    #[test]
+    fn prepare_translation_queue_re_evaluates_failed_rows() {
+        let db = setup_library_db();
+        let korean_lyricsfile = insert_synced_track(
+            &db,
+            42,
+            7,
+            "Failed Korean",
+            "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:02.00]햇살에 눈 비비고 일어나고",
+        );
+        let english_lyricsfile = insert_synced_track(
+            &db,
+            43,
+            8,
+            "Failed English",
+            "[00:01.00]I wake again\n[00:02.00]You got me up to my old ways again\n[00:03.00]One by one, two by two\n[00:04.00]My walls come falling down\n[00:05.00]Was lost and now I'm found",
+        );
+        let mut failed_korean =
+            successful_translation(&translation::lyrics_source_hash(&korean_lyricsfile));
+        failed_korean.lyricsfile_id = 7;
+        failed_korean.track_id = Some(42);
+        failed_korean.status = "failed".to_string();
+        failed_korean.translated_lines_json = None;
+        failed_korean.translated_lrc = None;
+        failed_korean.error_message = Some("provider error".to_string());
+        upsert_lyric_translation(&failed_korean, &db).unwrap();
+
+        let mut failed_english =
+            successful_translation(&translation::lyrics_source_hash(&english_lyricsfile));
+        failed_english.lyricsfile_id = 8;
+        failed_english.track_id = Some(43);
+        failed_english.status = "failed".to_string();
+        failed_english.translated_lines_json = None;
+        failed_english.translated_lrc = None;
+        failed_english.error_message = Some("provider error".to_string());
+        upsert_lyric_translation(&failed_english, &db).unwrap();
+
+        let prepared = prepare_existing_lyrics_translation_queue(
+            "gemini",
+            "gemini-flash-latest",
+            "English",
+            "settings-a",
+            &db,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.queued_track_ids, vec![42]);
+        assert_eq!(prepared.queued_count, 1);
+        assert_eq!(prepared.skipped_same_language_count, 1);
+        assert_eq!(prepared.already_current_count, 0);
+        assert_eq!(prepared.changed_track_ids, vec![42, 43]);
+        assert_eq!(get_track_translation_status(42, &db).unwrap(), "pending");
+        assert_eq!(
+            get_track_translation_status(43, &db).unwrap(),
+            "already_target_language"
+        );
+    }
+
+    #[test]
+    fn get_track_by_id_reports_translation_status_badges() {
+        let db = setup_library_db();
+        let lyricsfile = insert_synced_track(
+            &db,
+            42,
+            7,
+            "Badge Track",
+            "[00:01.00]아침에 눈을 뜨면 다가오는 햇살\n[00:02.00]햇살에 눈 비비고 일어나고",
+        );
+        let source_hash = translation::lyrics_source_hash(&lyricsfile);
+        let mut row = successful_translation(&source_hash);
+        row.lyricsfile_id = 7;
+        row.track_id = Some(42);
+
+        row.status = "pending".to_string();
+        row.translated_lines_json = None;
+        row.translated_lrc = None;
+        upsert_lyric_translation(&row, &db).unwrap();
+        assert_eq!(
+            get_track_by_id(42, &db).unwrap().translation_status,
+            "pending"
+        );
+
+        row.status = "succeeded".to_string();
+        row.translated_lines_json = Some(
+            r#"{"lines":[{"source_index":0,"translated_text":"Morning sunlight"}]}"#.to_string(),
+        );
+        row.translated_lrc = Some("[00:01.00]Morning sunlight".to_string());
+        upsert_lyric_translation(&row, &db).unwrap();
+        assert_eq!(
+            get_track_by_id(42, &db).unwrap().translation_status,
+            "translated"
+        );
+
+        row.status = "skipped_same_language".to_string();
+        row.translated_lines_json = None;
+        row.translated_lrc = None;
+        row.error_message = Some("Source lyrics are already English".to_string());
+        upsert_lyric_translation(&row, &db).unwrap();
+        assert_eq!(
+            get_track_by_id(42, &db).unwrap().translation_status,
+            "already_target_language"
+        );
+
+        row.status = "failed".to_string();
+        row.error_message = Some("provider error".to_string());
+        upsert_lyric_translation(&row, &db).unwrap();
+        assert_eq!(
+            get_track_by_id(42, &db).unwrap().translation_status,
+            "failed"
         );
     }
 

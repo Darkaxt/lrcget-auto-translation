@@ -11,8 +11,8 @@
       <button
         v-show="isLineControlsVisible"
         class="button p-1 rounded-full text-sm h-6 w-6"
-        :class="line.start_ms ? 'button-normal' : 'button-disabled'"
-        :disabled="!line.start_ms"
+        :class="hasLineStartTime ? 'button-normal' : 'button-disabled'"
+        :disabled="!hasLineStartTime"
         title="Play line"
         @click.stop="emit('play-line', index)"
       >
@@ -30,7 +30,7 @@
 
     <div class="relative flex-none">
       <button
-        v-show="isLineControlsVisible && line.start_ms"
+        v-show="isLineControlsVisible && hasLineStartTime"
         class="button p-0.5 rounded-full text-xs h-5 w-5 bg-hoa-100 dark:bg-hoa-1500 text-hoa-800 dark:text-hoa-200 absolute -left-1.5 top-1/2 -translate-y-1/2 z-10"
         title="Rewind line by 100ms"
         @click.stop="emit('rewind-line', index)"
@@ -44,7 +44,7 @@
         {{ timestampText }}
       </div>
       <button
-        v-show="isLineControlsVisible && line.start_ms"
+        v-show="isLineControlsVisible && hasLineStartTime"
         class="button p-0.5 rounded-full text-xs h-5 w-5 bg-hoa-100 dark:bg-hoa-1500 text-hoa-800 dark:text-hoa-200 absolute -right-1.5 top-1/2 -translate-y-1/2 z-10"
         title="Forward line by 100ms"
         @click.stop="emit('forward-line', index)"
@@ -207,6 +207,8 @@ const emit = defineEmits([
 ])
 
 const rowElement = ref(null)
+
+const hasLineStartTime = computed(() => Number.isFinite(props.line?.start_ms))
 
 // Determine if this line is currently playing based on its own time range
 const isLinePlaying = computed(() => {

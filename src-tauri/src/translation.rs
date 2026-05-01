@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
+use thiserror::Error;
 use xxhash_rust::xxh3::xxh3_64;
 
 pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
@@ -19,7 +20,8 @@ const MIN_LANGUAGE_DETECTION_CHARS: usize = 40;
 const CHUNK_LANGUAGE_DETECTION_CHARS: usize = 80;
 const CHUNK_LANGUAGE_DETECTION_CONFIDENCE: f64 = 0.70;
 const LATIN_TARGET_NON_LATIN_CONFLICT_RATIO: f64 = 0.05;
-const TRANSLATION_PROVIDER_TIMEOUT_SECONDS: u64 = 60;
+pub const TRANSLATION_PROVIDER_TIMEOUT_SECONDS: u64 = 180;
+pub const TRANSLATION_PROVIDER_MAX_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +70,85 @@ pub struct LyricTranslation {
     pub translated_lrc: Option<String>,
     pub error_message: Option<String>,
     pub provider_metadata_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranslationProviderErrorKind {
+    Timeout,
+    Connect,
+    RetryableStatus,
+    Status,
+    Request,
+}
+
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub struct TranslationProviderError {
+    message: String,
+    retryable: bool,
+    kind: TranslationProviderErrorKind,
+}
+
+impl TranslationProviderError {
+    pub fn transport(
+        provider: &str,
+        url: Option<reqwest::Url>,
+        kind: TranslationProviderErrorKind,
+        detail: String,
+    ) -> Self {
+        let reason = match kind {
+            TranslationProviderErrorKind::Timeout => "timeout",
+            TranslationProviderErrorKind::Connect => "connection",
+            _ => "request",
+        };
+        let url = url
+            .as_ref()
+            .map(redacted_url_string)
+            .unwrap_or_else(|| "<unknown url>".to_string());
+        Self {
+            message: format!(
+                "{} request transport error ({}) for {}: {}",
+                provider,
+                reason,
+                url,
+                response_body_preview(&detail)
+            ),
+            retryable: matches!(
+                kind,
+                TranslationProviderErrorKind::Timeout | TranslationProviderErrorKind::Connect
+            ),
+            kind,
+        }
+    }
+
+    fn status(provider: &str, status: reqwest::StatusCode, url: &reqwest::Url, body: &str) -> Self {
+        let retryable = retryable_http_status(status);
+        Self {
+            message: provider_status_error_message(provider, status, url, body),
+            retryable,
+            kind: if retryable {
+                TranslationProviderErrorKind::RetryableStatus
+            } else {
+                TranslationProviderErrorKind::Status
+            },
+        }
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+
+    pub fn kind(&self) -> TranslationProviderErrorKind {
+        self.kind
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationAttemptReport {
+    pub attempt: usize,
+    pub retryable: bool,
+    pub error: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,6 +268,62 @@ pub async fn request_translation(
         "microsoft" => request_microsoft_translation(config, request).await,
         "openai_compatible" => request_openai_compatible_translation(config, request).await,
         provider => Err(anyhow!("unsupported translation provider '{}'", provider)),
+    }
+}
+
+pub fn should_retry_translation_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<TranslationProviderError>())
+        .map(TranslationProviderError::is_retryable)
+        .unwrap_or(false)
+}
+
+pub fn translation_error_report(error: &anyhow::Error) -> String {
+    let mut parts = Vec::new();
+
+    for cause in error.chain() {
+        let message = cause.to_string();
+        if parts.last() != Some(&message) {
+            parts.push(message);
+        }
+    }
+
+    if parts.is_empty() {
+        return error.to_string();
+    }
+
+    response_body_preview(&parts.join(": "))
+}
+
+pub fn translation_provider_metadata_json(
+    provider: &str,
+    requested_model: &str,
+    failed_attempts: &[TranslationAttemptReport],
+    succeeded: bool,
+) -> Result<String> {
+    let attempt_count = if succeeded {
+        failed_attempts.len() + 1
+    } else {
+        failed_attempts.len()
+    };
+    let last_error = failed_attempts.last().map(|attempt| attempt.error.as_str());
+    serde_json::to_string(&json!({
+        "provider": provider,
+        "requestedModel": requested_model,
+        "attemptCount": attempt_count,
+        "succeeded": succeeded,
+        "lastError": last_error,
+        "attempts": failed_attempts,
+    }))
+    .map_err(Into::into)
+}
+
+pub fn translation_retry_delay(attempt: usize) -> Duration {
+    match attempt {
+        1 => Duration::from_secs(3),
+        2 => Duration::from_secs(12),
+        _ => Duration::from_secs(30),
     }
 }
 
@@ -457,14 +594,11 @@ async fn request_gemini_translation(
             "contents": [{
                 "parts": [{ "text": build_context_prompt(request) }]
             }],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-                "responseJsonSchema": translation_response_schema(line_count)
-            }
+            "generationConfig": gemini_generation_config(line_count)
         }))
         .send()
-        .await?;
+        .await
+        .map_err(|err| provider_transport_error("Gemini", err))?;
     let raw = response_text_or_status_error(response, "Gemini").await?;
     structured_json_from_gemini_response(&raw)
 }
@@ -504,7 +638,10 @@ async fn request_openai_compatible_translation(
         builder = builder.bearer_auth(config.translation_openai_api_key.trim());
     }
 
-    let response = builder.send().await?;
+    let response = builder
+        .send()
+        .await
+        .map_err(|err| provider_transport_error("OpenAI-compatible", err))?;
     let raw = response_text_or_status_error(response, "OpenAI-compatible").await?;
     structured_json_from_openai_response(&raw)
 }
@@ -531,7 +668,8 @@ async fn request_deepl_translation(
         .post(endpoint)
         .form(&form)
         .send()
-        .await?;
+        .await
+        .map_err(|err| provider_transport_error("DeepL", err))?;
     let raw = response_text_or_status_error(response, "DeepL").await?;
     structured_json_from_deepl_response(&raw)
 }
@@ -552,7 +690,8 @@ async fn request_google_translation(
             "format": "text"
         }))
         .send()
-        .await?;
+        .await
+        .map_err(|err| provider_transport_error("Google Translate", err))?;
     let raw = response_text_or_status_error(response, "Google Translate").await?;
     structured_json_from_google_response(&raw)
 }
@@ -586,7 +725,10 @@ async fn request_microsoft_translation(
         );
     }
 
-    let response = builder.send().await?;
+    let response = builder
+        .send()
+        .await
+        .map_err(|err| provider_transport_error("Microsoft Translator", err))?;
     let raw = response_text_or_status_error(response, "Microsoft Translator").await?;
     structured_json_from_microsoft_response(&raw)
 }
@@ -597,16 +739,27 @@ async fn response_text_or_status_error(
 ) -> Result<String> {
     let status = response.status();
     let url = response.url().clone();
-    let body = response.text().await?;
+    let body = response
+        .text()
+        .await
+        .map_err(|err| provider_transport_error(provider, err))?;
 
     if !status.is_success() {
-        return Err(anyhow!(
-            "{}",
-            provider_status_error_message(provider, status, &url, &body)
-        ));
+        return Err(anyhow::Error::new(provider_status_error(
+            provider, status, &url, &body,
+        )));
     }
 
     Ok(body)
+}
+
+fn provider_status_error(
+    provider: &str,
+    status: reqwest::StatusCode,
+    url: &reqwest::Url,
+    body: &str,
+) -> TranslationProviderError {
+    TranslationProviderError::status(provider, status, url, body)
 }
 
 fn provider_status_error_message(
@@ -623,6 +776,38 @@ fn provider_status_error_message(
         redacted_url_string(url),
         body
     )
+}
+
+fn retryable_http_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT
+            | reqwest::StatusCode::TOO_MANY_REQUESTS
+            | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+            | reqwest::StatusCode::BAD_GATEWAY
+            | reqwest::StatusCode::SERVICE_UNAVAILABLE
+            | reqwest::StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn provider_transport_error(provider: &str, error: reqwest::Error) -> anyhow::Error {
+    let kind = if error.is_timeout() {
+        TranslationProviderErrorKind::Timeout
+    } else if error.is_connect() {
+        TranslationProviderErrorKind::Connect
+    } else {
+        TranslationProviderErrorKind::Request
+    };
+    let url = error.url().cloned();
+    let mut detail = error.to_string();
+
+    if let Some(url) = error.url() {
+        detail = detail.replace(url.as_str(), &redacted_url_string(url));
+    }
+
+    anyhow::Error::new(TranslationProviderError::transport(
+        provider, url, kind, detail,
+    ))
 }
 
 fn response_body_preview(body: &str) -> String {
@@ -727,6 +912,17 @@ fn translation_response_schema(line_count: usize) -> serde_json::Value {
             }
         },
         "required": ["lines"]
+    })
+}
+
+fn gemini_generation_config(line_count: usize) -> serde_json::Value {
+    json!({
+        "temperature": 0.2,
+        "responseMimeType": "application/json",
+        "responseJsonSchema": translation_response_schema(line_count),
+        "thinkingConfig": {
+            "thinkingBudget": 0
+        }
     })
 }
 
@@ -1305,6 +1501,108 @@ mod tests {
         assert!(message.contains("Invalid request payload"));
         assert!(!message.contains("secret-token"));
         assert!(message.contains("key=REDACTED"));
+    }
+
+    #[test]
+    fn provider_timeout_error_is_retryable() {
+        let error = anyhow::Error::new(TranslationProviderError::transport(
+            "Gemini",
+            None,
+            TranslationProviderErrorKind::Timeout,
+            "request timed out after 60 seconds".to_string(),
+        ));
+
+        assert!(should_retry_translation_error(&error));
+    }
+
+    #[test]
+    fn provider_http_429_error_is_retryable() {
+        let url =
+            reqwest::Url::parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent")
+                .unwrap();
+        let error = anyhow::Error::new(provider_status_error(
+            "Gemini",
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            &url,
+            r#"{"error":{"message":"quota exceeded"}}"#,
+        ));
+
+        assert!(should_retry_translation_error(&error));
+        assert!(translation_error_report(&error).contains("HTTP 429"));
+    }
+
+    #[test]
+    fn provider_http_400_error_is_not_retryable() {
+        let url =
+            reqwest::Url::parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent")
+                .unwrap();
+        let error = anyhow::Error::new(provider_status_error(
+            "Gemini",
+            reqwest::StatusCode::BAD_REQUEST,
+            &url,
+            r#"{"error":{"message":"bad request"}}"#,
+        ));
+
+        assert!(!should_retry_translation_error(&error));
+    }
+
+    #[test]
+    fn validation_error_is_not_retryable() {
+        let source = "[00:01.00]첫 줄\n[00:02.00]둘째 줄";
+        let invalid_json = r#"{"lines":[{"source_index":0,"translated_text":"First line"}]}"#;
+        let error = validate_translation_lines(source, invalid_json).unwrap_err();
+
+        assert!(!should_retry_translation_error(&error));
+    }
+
+    #[test]
+    fn translation_failure_metadata_records_attempts_and_last_error() {
+        let attempts = vec![
+            TranslationAttemptReport {
+                attempt: 1,
+                retryable: true,
+                error: "Gemini request transport error (timeout)".to_string(),
+            },
+            TranslationAttemptReport {
+                attempt: 2,
+                retryable: true,
+                error: "Gemini request failed with HTTP 429".to_string(),
+            },
+            TranslationAttemptReport {
+                attempt: 3,
+                retryable: false,
+                error: "Gemini request failed with HTTP 400".to_string(),
+            },
+        ];
+
+        let metadata =
+            translation_provider_metadata_json("gemini", "gemini-flash-latest", &attempts, false)
+                .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+
+        assert_eq!(value["provider"], "gemini");
+        assert_eq!(value["requestedModel"], "gemini-flash-latest");
+        assert_eq!(value["attemptCount"], 3);
+        assert_eq!(value["succeeded"], false);
+        assert_eq!(value["lastError"], "Gemini request failed with HTTP 400");
+        assert_eq!(value["attempts"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn gemini_generation_config_disables_thinking_for_fast_translation() {
+        let config = gemini_generation_config(2);
+
+        assert_eq!(config["temperature"], 0.2);
+        assert_eq!(config["responseMimeType"], "application/json");
+        assert_eq!(config["thinkingConfig"]["thinkingBudget"], 0);
+        assert_eq!(
+            config["responseJsonSchema"]["properties"]["lines"]["minItems"],
+            2
+        );
+        assert_eq!(
+            config["responseJsonSchema"]["properties"]["lines"]["maxItems"],
+            2
+        );
     }
 
     #[test]

@@ -301,7 +301,12 @@
     </div>
 
     <template #footer>
-      <button class="button button-primary px-8 py-2 rounded-full" @click="save">Save</button>
+      <button
+        class="button button-primary px-8 py-2 rounded-full"
+        @click="save"
+      >
+        Save
+      </button>
     </template>
   </BaseModal>
 </template>

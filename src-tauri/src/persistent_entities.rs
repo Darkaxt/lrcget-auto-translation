@@ -86,7 +86,7 @@ pub struct PersistentArtist {
     pub tracks_count: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PersistentConfig {
     pub skip_tracks_with_synced_lyrics: bool,
     pub skip_tracks_with_plain_lyrics: bool,

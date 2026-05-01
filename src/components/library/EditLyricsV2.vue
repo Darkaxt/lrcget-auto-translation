@@ -18,7 +18,8 @@
     </template>
 
     <template #titleRight>
-      <div class="inline-flex gap-0.5">
+      <div class="inline-flex items-center gap-2">
+        <div class="inline-flex gap-0.5">
         <button
           class="button text-sm h-8 w-24 rounded-l-full rounded-r-none"
           :class="
@@ -47,18 +48,19 @@
         >
           Synced
         </button>
+        </div>
       </div>
     </template>
 
     <div class="grow overflow-hidden flex flex-col gap-2 h-full">
       <div class="toolbar bg-neutral-100 dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700">
         <EditLyricsV2PlayerBar
-          :status="status"
-          :duration="duration"
-          :progress="progress"
+          :status="editorStatus"
+          :duration="editorDuration"
+          :progress="editorProgress"
           @play-toggle="resumeOrPlay"
-          @pause="pause"
-          @seek="seek"
+          @pause="pauseEditorPlayback"
+          @seek="seekEditorPlayback"
         />
       </div>
 
@@ -179,8 +181,6 @@ const audioSourceRef = toRef(props, 'audioSource')
 const lyricsfileRef = toRef(props, 'lyricsfile')
 const trackIdRef = toRef(props, 'trackId')
 
-const progressMs = computed(() => Math.max(0, Math.round(progress.value * 1000)))
-
 const activeTab = ref('plain')
 const {
   plainLyrics,
@@ -219,6 +219,25 @@ const {
   toast,
 })
 
+const isPlayingEditorTrack = computed(() => {
+  if (!playingTrack.value || !audioSourceRef.value) {
+    return false
+  }
+
+  return audioSourceRef.value.type === 'library'
+    ? playingTrack.value.id === audioSourceRef.value.id
+    : playingTrack.value.file_path === audioSourceRef.value.file_path
+})
+
+const editorStatus = computed(() => (isPlayingEditorTrack.value ? status.value : 'stopped'))
+const editorDuration = computed(() =>
+  isPlayingEditorTrack.value
+    ? duration.value || audioSourceRef.value?.duration || 0
+    : audioSourceRef.value?.duration || 0
+)
+const editorProgress = computed(() => (isPlayingEditorTrack.value ? progress.value || 0 : 0))
+const progressMs = computed(() => Math.max(0, Math.round(editorProgress.value * 1000)))
+
 const codemirrorStyle = ref({
   fontSize: 1.0,
 })
@@ -237,16 +256,22 @@ const { exportLyrics, isExporting } = useEditLyricsV2Export({
   toast,
 })
 
-const { playLine, resumeOrPlay } = useEditLyricsV2Playback({
-  audioSource: audioSourceRef,
-  syncedLines,
-  progress,
-  playingTrack,
-  status,
-  playTrack,
-  resume,
-  seek,
-})
+const { clearLinePreview, pauseEditorPlayback, playLine, resumeOrPlay, seekEditorPlayback } =
+  useEditLyricsV2Playback({
+    audioSource: audioSourceRef,
+    syncedLines,
+    progress: editorProgress,
+    playingTrack,
+    status: editorStatus,
+    playTrack,
+    resume,
+    pause,
+    seek,
+    onPlaybackError: error => {
+      console.error('Editor playback failed:', error)
+      toast.error(`Playback failed: ${error}`)
+    },
+  })
 
 const rewindLineBy100 = lineIndex => {
   rewindLineTimestampBy100(lineIndex)
@@ -340,21 +365,20 @@ const handlePasteLrc = async () => {
 
 const handleWordTimingEdited = async ({ startMs }) => {
   // Auto-replay from the beginning of the edited line for instant verification
-  const seekTo = Number.isFinite(startMs) ? startMs / 1000 : progress.value
+  const seekTo = Number.isFinite(startMs) ? startMs / 1000 : editorProgress.value
 
-  // Ensure we're playing the correct audio source
-  const isPlayingCorrectTrack =
-    audioSourceRef.value.type === 'library'
-      ? playingTrack.value?.id === audioSourceRef.value.id
-      : playingTrack.value?.file_path === audioSourceRef.value.file_path
+  try {
+    if (!isPlayingEditorTrack.value) {
+      await playTrack(audioSourceRef.value)
+    } else if (editorStatus.value === 'paused') {
+      await resume()
+    }
 
-  if (!playingTrack.value || !isPlayingCorrectTrack) {
-    await playTrack(audioSourceRef.value)
-  } else if (status.value === 'paused') {
-    resume()
+    await seek(seekTo)
+  } catch (error) {
+    console.error('Editor playback failed:', error)
+    toast.error(`Playback failed: ${error}`)
   }
-
-  seek(seekTo)
 }
 
 watch(activeTab, value => {
@@ -441,28 +465,18 @@ const { bindHotkeys, unbindHotkeys } = useEditLyricsV2Hotkeys({
   resetFontSize: resetCodemirrorFontSize,
 })
 
-onMounted(() => {
+onMounted(async () => {
   disableHotkey()
 
   // Initialize lyrics from props
   initializeLyrics()
-
-  // Handle playback - ensure correct audio source is loaded
-  const isPlayingCorrectTrack =
-    audioSourceRef.value?.type === 'library'
-      ? playingTrack.value?.id === audioSourceRef.value?.id
-      : playingTrack.value?.file_path === audioSourceRef.value?.file_path
-
-  if (!playingTrack.value || !isPlayingCorrectTrack) {
-    playTrack(audioSourceRef.value)
-    pause()
-  }
 
   bindHotkeys()
   bindSyncedHotkeys()
 })
 
 onUnmounted(() => {
+  clearLinePreview()
   unbindSyncedHotkeys()
   unbindHotkeys()
   enableHotkey()

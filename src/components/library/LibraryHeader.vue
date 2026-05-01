@@ -104,13 +104,18 @@
 
       <button
         v-if="isTranslating && processedTranslationCount < translationTotalCount"
-        class="button button-working h-full min-w-[9rem] px-3 py-1.5 text-xs rounded-full"
+        class="button button-working h-full min-w-[14rem] px-3 py-1.5 text-xs rounded-full"
         title="Translating stored lyrics"
       >
         <div class="animate-spin text-sm">
           <Loading />
         </div>
-        <span>{{ processedTranslationCount }}/{{ translationTotalCount }}</span>
+        <span class="whitespace-nowrap">
+          {{ activeTranslationCount }} active · {{ processedTranslationCount }}/{{
+            translationTotalCount
+          }}
+          · {{ formattedTranslationSpeed }}
+        </span>
       </button>
 
       <button
@@ -186,7 +191,7 @@
                 v-model="exportSyncedLrc"
                 name="export-synced-lrc"
               >
-                <span class="dropdown-label">Synced lyrics (.lrc)</span>
+                <span class="dropdown-label">Timestamped lyrics (.lrc)</span>
               </CheckboxButton>
             </label>
 
@@ -200,7 +205,7 @@
                 name="embed-into-track"
                 :disabled="!tryEmbedLyrics"
               >
-                <span class="dropdown-label">Embed into track</span>
+                <span class="dropdown-label">Embed lyrics into audio</span>
               </CheckboxButton>
             </label>
 
@@ -320,12 +325,26 @@ const { isExporting, exportedCount, skippedCount, errorCount, totalCount: export
 const {
   isTranslating,
   processedCount: processedTranslationCount,
+  activeCount: activeTranslationCount,
+  translationSpeedPerSecond,
   totalCount: translationTotalCount,
   addToQueue: addToTranslationQueue,
   startOver: startTranslationOver,
 } = useTranslator()
 
 const isBuildingQueue = ref(false)
+const formattedTranslationSpeed = computed(() => {
+  const speed = translationSpeedPerSecond.value
+  if (speed === null) {
+    return '--/s'
+  }
+
+  if (speed > 0 && speed < 0.1) {
+    return '<0.1/s'
+  }
+
+  return `${speed.toFixed(1)}/s`
+})
 
 const downloadAllLyrics = async () => {
   isBuildingQueue.value = true
@@ -351,20 +370,35 @@ const downloadAllLyrics = async () => {
 
 const translateExistingLyrics = async () => {
   try {
-    const trackIds = await invoke('get_track_ids_requiring_translation')
+    const prepared = await invoke('prepare_existing_lyrics_translation_queue')
 
-    if (trackIds.length === 0) {
+    if (prepared.queuedCount === 0 && prepared.skippedSameLanguageCount === 0) {
       toast.info('No stored synced lyrics need translation')
       return
     }
 
-    addToTranslationQueue(trackIds)
-    toast.info(`Queued ${trackIds.length} stored lyrics for translation`)
+    if (prepared.queuedCount > 0) {
+      addToTranslationQueue(prepared.queuedTrackIds)
+    }
+
+    const summary = []
+    if (prepared.queuedCount > 0) {
+      summary.push(`queued ${prepared.queuedCount}`)
+    }
+    if (prepared.skippedSameLanguageCount > 0) {
+      summary.push(`${prepared.skippedSameLanguageCount} already in target language`)
+    }
+    if (prepared.alreadyCurrentCount > 0) {
+      summary.push(`${prepared.alreadyCurrentCount} already current`)
+    }
+
+    toast.info(`Prepared stored lyric translation: ${summary.join(', ')}`)
   } catch (error) {
     console.error(error)
     toast.error(`Failed to queue stored lyrics for translation: ${error}`)
   }
 }
+
 </script>
 
 <style scoped>

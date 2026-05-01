@@ -50,13 +50,14 @@ const toast = useToast()
 const { themeMode, setThemeMode, setLrclibInstance } = useGlobalState()
 const { downloadNext } = useDownloader()
 const { exportNext } = useExporter()
-const { translateNext } = useTranslator()
+const { startTranslationWorkers } = useTranslator()
 const { setVolume } = usePlayer()
 
 const loading = ref(true)
 const init = ref(false)
 const shouldScan = ref(false)
 const isProd = ref(import.meta.env.PROD)
+const NOTIFICATION_DRAIN_INTERVAL_MS = 1000
 
 const uninitializeLibrary = async () => {
   loading.value = true
@@ -92,7 +93,7 @@ onMounted(async () => {
   darkModeHandle(themeMode.value)
   downloadNext()
   exportNext()
-  translateNext()
+  startTranslationWorkers(3)
   drainNotifications()
 })
 
@@ -113,7 +114,7 @@ const drainNotifications = async () => {
         type: notification.type,
       })
     })
-  }, 100)
+  }, NOTIFICATION_DRAIN_INTERVAL_MS)
 }
 
 const darkModeHandle = async themeMode => {

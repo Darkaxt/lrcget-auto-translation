@@ -59,7 +59,7 @@
                 v-model="exportSyncedLrc"
                 name="export-synced-lrc"
               >
-                <span class="dropdown-label">Synced lyrics (.lrc)</span>
+                <span class="dropdown-label">Timestamped lyrics (.lrc)</span>
               </CheckboxButton>
             </label>
 
@@ -73,7 +73,7 @@
                 name="embed-into-track"
                 :disabled="!tryEmbedLyrics"
               >
-                <span class="dropdown-label">Embed into track</span>
+                <span class="dropdown-label">Embed lyrics into audio</span>
               </CheckboxButton>
             </label>
 

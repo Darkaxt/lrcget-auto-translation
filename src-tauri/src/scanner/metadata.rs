@@ -65,9 +65,10 @@ impl TrackMetadata {
 
         let properties = tagged_file.properties();
 
+        let tag_title = tag.title();
+
         // Extract required fields
-        let title = tag
-            .title()
+        let title = metadata_title_or_file_name(tag_title.as_deref(), &file_name)
             .ok_or_else(|| MetadataError::MissingField {
                 field: "title".to_string(),
                 path: file_path.clone(),
@@ -154,5 +155,49 @@ pub fn is_instrumental_lyrics(lrc_lyrics: &Option<String>) -> bool {
             re.is_match(lyrics)
         }
         None => false,
+    }
+}
+
+fn metadata_title_or_file_name(title: Option<&str>, file_name: &str) -> Option<String> {
+    title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let file_name = file_name.trim();
+            if file_name.is_empty() {
+                None
+            } else {
+                Some(file_name.to_string())
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_title_uses_tag_title_when_present() {
+        assert_eq!(
+            metadata_title_or_file_name(Some("Track Title"), "01 - File Name.flac"),
+            Some("Track Title".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_title_falls_back_to_file_name_when_tag_title_is_missing() {
+        assert_eq!(
+            metadata_title_or_file_name(None, "01 - File Name.flac"),
+            Some("01 - File Name.flac".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_title_falls_back_to_file_name_when_tag_title_is_blank() {
+        assert_eq!(
+            metadata_title_or_file_name(Some("   "), "01 - File Name.flac"),
+            Some("01 - File Name.flac".to_string())
+        );
     }
 }
