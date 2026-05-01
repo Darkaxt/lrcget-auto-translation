@@ -18,7 +18,17 @@
     </template>
 
     <template #titleRight>
-      <div class="inline-flex gap-0.5">
+      <div class="inline-flex items-center gap-2">
+        <button
+          v-if="canAutoSync"
+          class="button text-sm h-8 px-3 rounded-full"
+          :class="isAutoSyncing ? 'button-disabled' : 'button-normal'"
+          :disabled="isAutoSyncing"
+          @click="runAutoSync"
+        >
+          {{ isAutoSyncing ? 'Syncing' : 'Auto-sync' }}
+        </button>
+        <div class="inline-flex gap-0.5">
         <button
           class="button text-sm h-8 w-24 rounded-l-full rounded-r-none"
           :class="
@@ -47,19 +57,43 @@
         >
           Synced
         </button>
+        </div>
       </div>
     </template>
 
     <div class="grow overflow-hidden flex flex-col gap-2 h-full">
       <div class="toolbar bg-neutral-100 dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-700">
         <EditLyricsV2PlayerBar
-          :status="status"
-          :duration="duration"
-          :progress="progress"
+          :status="editorStatus"
+          :duration="editorDuration"
+          :progress="editorProgress"
           @play-toggle="resumeOrPlay"
-          @pause="pause"
-          @seek="seek"
+          @pause="pauseEditorPlayback"
+          @seek="seekEditorPlayback"
         />
+      </div>
+
+      <div
+        v-if="autoSyncPreview"
+        class="rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 p-3"
+      >
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="text-sm font-bold text-neutral-900 dark:text-neutral-100">
+            Auto-sync preview · {{ autoSyncPreviewConfidence }}
+          </div>
+          <div class="flex gap-2">
+            <button class="button button-primary h-8 px-3 rounded" @click="applyAutoSyncPreview">
+              Apply
+            </button>
+            <button class="button button-normal h-8 px-3 rounded" @click="discardAutoSyncPreview">
+              Discard
+            </button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-xs max-h-40 overflow-hidden">
+          <pre class="overflow-auto whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">{{ plainLyrics }}</pre>
+          <pre class="overflow-auto whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">{{ autoSyncPreview.generatedLrc }}</pre>
+        </div>
       </div>
 
       <!-- Instrumental State -->
@@ -129,6 +163,7 @@ import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import EditLyricsV2DebugModal from '@/components/library/edit-lyrics-v2/EditLyricsV2DebugModal.vue'
 import EditLyricsV2HeaderActions from '@/components/library/edit-lyrics-v2/EditLyricsV2HeaderActions.vue'
 import EditLyricsV2PlayerBar from '@/components/library/edit-lyrics-v2/EditLyricsV2PlayerBar.vue'
+import AutoSyncViewer from '@/components/library/AutoSyncViewer.vue'
 import PlainLyricsCodeEditor from '@/components/library/edit-lyrics-v2/PlainLyricsCodeEditor.vue'
 import SyncedLyricsEditor from '@/components/library/edit-lyrics-v2/SyncedLyricsEditor.vue'
 import { useEditLyricsV2Document } from '@/composables/edit-lyrics-v2/useEditLyricsV2Document.js'
@@ -139,6 +174,7 @@ import { useEditLyricsV2Export } from '@/composables/edit-lyrics-v2/useEditLyric
 import { useEditLyricsV2SyncedHotkeys } from '@/composables/edit-lyrics-v2/useEditLyricsV2SyncedHotkeys.js'
 import { useGlobalState } from '@/composables/global-state.js'
 import { usePlayer } from '@/composables/player.js'
+import { useAutoSync } from '@/composables/auto-sync.js'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { invoke } from '@tauri-apps/api/core'
@@ -172,6 +208,11 @@ const emit = defineEmits(['close'])
 
 const { disableHotkey, enableHotkey } = useGlobalState()
 const { status, duration, progress, playingTrack, playTrack, pause, resume, seek } = usePlayer()
+const {
+  startManualRun: startManualAutoSyncRun,
+  finishManualRun: finishManualAutoSyncRun,
+  failManualRun: failManualAutoSyncRun,
+} = useAutoSync()
 const toast = useToast()
 
 // Convert props to refs for composables
@@ -179,9 +220,9 @@ const audioSourceRef = toRef(props, 'audioSource')
 const lyricsfileRef = toRef(props, 'lyricsfile')
 const trackIdRef = toRef(props, 'trackId')
 
-const progressMs = computed(() => Math.max(0, Math.round(progress.value * 1000)))
-
 const activeTab = ref('plain')
+const isAutoSyncing = ref(false)
+const autoSyncPreview = ref(null)
 const {
   plainLyrics,
   syncedLines,
@@ -194,6 +235,7 @@ const {
   isInstrumental,
   serializedLyricsfile,
   initializeLyrics,
+  replaceSyncedLines,
   updatePlainLyrics,
   updateSyncedLines,
   selectSyncedLine,
@@ -219,9 +261,52 @@ const {
   toast,
 })
 
+const isPlayingEditorTrack = computed(() => {
+  if (!playingTrack.value || !audioSourceRef.value) {
+    return false
+  }
+
+  return audioSourceRef.value.type === 'library'
+    ? playingTrack.value.id === audioSourceRef.value.id
+    : playingTrack.value.file_path === audioSourceRef.value.file_path
+})
+
+const editorStatus = computed(() => (isPlayingEditorTrack.value ? status.value : 'stopped'))
+const editorDuration = computed(() =>
+  isPlayingEditorTrack.value
+    ? duration.value || audioSourceRef.value?.duration || 0
+    : audioSourceRef.value?.duration || 0
+)
+const editorProgress = computed(() => (isPlayingEditorTrack.value ? progress.value || 0 : 0))
+const progressMs = computed(() => Math.max(0, Math.round(editorProgress.value * 1000)))
+
 const codemirrorStyle = ref({
   fontSize: 1.0,
 })
+
+const canAutoSync = computed(() => {
+  return (
+    props.trackId !== null &&
+    !isInstrumental.value &&
+    hasPlainLyrics.value &&
+    syncedLines.value.length === 0
+  )
+})
+
+const autoSyncPreviewConfidence = computed(() => {
+  const confidence = autoSyncPreview.value?.confidence
+  if (!Number.isFinite(confidence)) {
+    return 'confidence unknown'
+  }
+  return `${Math.round(confidence * 100)}% confidence`
+})
+
+const autoSyncViewerTrack = computed(() => ({
+  id: props.trackId,
+  title: audioSourceRef.value?.title || lyricsfileRef.value?.metadata?.title || 'Unknown Title',
+  artist_name:
+    audioSourceRef.value?.artist_name || lyricsfileRef.value?.metadata?.artist || 'Unknown Artist',
+}))
 
 const { saveAndPublish } = useEditLyricsV2Publish({
   audioSource: audioSourceRef,
@@ -237,16 +322,22 @@ const { exportLyrics, isExporting } = useEditLyricsV2Export({
   toast,
 })
 
-const { playLine, resumeOrPlay } = useEditLyricsV2Playback({
-  audioSource: audioSourceRef,
-  syncedLines,
-  progress,
-  playingTrack,
-  status,
-  playTrack,
-  resume,
-  seek,
-})
+const { clearLinePreview, pauseEditorPlayback, playLine, resumeOrPlay, seekEditorPlayback } =
+  useEditLyricsV2Playback({
+    audioSource: audioSourceRef,
+    syncedLines,
+    progress: editorProgress,
+    playingTrack,
+    status: editorStatus,
+    playTrack,
+    resume,
+    pause,
+    seek,
+    onPlaybackError: error => {
+      console.error('Editor playback failed:', error)
+      toast.error(`Playback failed: ${error}`)
+    },
+  })
 
 const rewindLineBy100 = lineIndex => {
   rewindLineTimestampBy100(lineIndex)
@@ -340,21 +431,134 @@ const handlePasteLrc = async () => {
 
 const handleWordTimingEdited = async ({ startMs }) => {
   // Auto-replay from the beginning of the edited line for instant verification
-  const seekTo = Number.isFinite(startMs) ? startMs / 1000 : progress.value
+  const seekTo = Number.isFinite(startMs) ? startMs / 1000 : editorProgress.value
 
-  // Ensure we're playing the correct audio source
-  const isPlayingCorrectTrack =
-    audioSourceRef.value.type === 'library'
-      ? playingTrack.value?.id === audioSourceRef.value.id
-      : playingTrack.value?.file_path === audioSourceRef.value.file_path
+  try {
+    if (!isPlayingEditorTrack.value) {
+      await playTrack(audioSourceRef.value)
+    } else if (editorStatus.value === 'paused') {
+      await resume()
+    }
 
-  if (!playingTrack.value || !isPlayingCorrectTrack) {
-    await playTrack(audioSourceRef.value)
-  } else if (status.value === 'paused') {
-    resume()
+    await seek(seekTo)
+  } catch (error) {
+    console.error('Editor playback failed:', error)
+    toast.error(`Playback failed: ${error}`)
+  }
+}
+
+const { open: openAutoSyncViewer, close: closeAutoSyncViewer } = useModal({
+  component: AutoSyncViewer,
+  attrs: {
+    onClose() {
+      closeAutoSyncViewer()
+    },
+  },
+})
+
+const restoreAutoSyncReviewDraft = async () => {
+  if (props.trackId === null || autoSyncPreview.value || syncedLines.value.length > 0) {
+    return
   }
 
-  seek(seekTo)
+  try {
+    const results = await invoke('list_track_sync_results', { trackId: props.trackId })
+    const sourceLyricsfile = lyricsfileRef.value?.content ?? ''
+    const review = results.find(
+      result =>
+        result.status === 'needs_review' &&
+        result.generatedLrc &&
+        (!sourceLyricsfile || result.sourceLyricsfile === sourceLyricsfile)
+    )
+
+    if (!review) {
+      return
+    }
+
+    const parsedLines = parseLrcLines(review.generatedLrc || '')
+    if (parsedLines.length === 0) {
+      return
+    }
+
+    replaceSyncedLines(parsedLines, { markDirty: false })
+    autoSyncPreview.value = {
+      id: review.id,
+      generatedLrc: review.generatedLrc || '',
+      confidence: review.confidence,
+    }
+    activeTab.value = 'synced'
+  } catch (error) {
+    console.error('Failed to restore auto-sync review draft:', error)
+  }
+}
+
+const runAutoSync = async () => {
+  if (!canAutoSync.value || isAutoSyncing.value) {
+    return
+  }
+
+  isAutoSyncing.value = true
+  const syncTrack = autoSyncViewerTrack.value
+  startManualAutoSyncRun(syncTrack)
+  openAutoSyncViewer()
+  try {
+    const result = await invoke('auto_sync_track_lyrics', { trackId: props.trackId })
+    finishManualAutoSyncRun(syncTrack, result)
+    if (result.status === 'succeeded') {
+      const parsedLines = parseLrcLines(result.generatedLrc || '')
+      if (parsedLines.length > 0) {
+        updateSyncedLines(parsedLines)
+        activeTab.value = 'synced'
+      }
+      toast.success('Lyrics auto-synced')
+    } else if (result.status === 'needs_review') {
+      const parsedLines = parseLrcLines(result.generatedLrc || '')
+      if (parsedLines.length === 0) {
+        toast.error('Auto-sync result needs review, but no valid timestamped lines were returned')
+        return
+      }
+
+      replaceSyncedLines(parsedLines, { markDirty: false })
+      autoSyncPreview.value = {
+        id: result.id,
+        generatedLrc: result.generatedLrc || '',
+        confidence: result.confidence,
+      }
+      activeTab.value = 'synced'
+      toast.info('Auto-sync result needs review')
+    } else {
+      toast.error(result.errorMessage || 'Auto-sync failed')
+    }
+  } catch (error) {
+    failManualAutoSyncRun(syncTrack, error)
+    console.error(error)
+    toast.error(`Auto-sync failed: ${error}`)
+  } finally {
+    isAutoSyncing.value = false
+  }
+}
+
+const applyAutoSyncPreview = async () => {
+  if (!autoSyncPreview.value) {
+    return
+  }
+
+  try {
+    await invoke('apply_sync_result_to_lyricsfile', { syncId: autoSyncPreview.value.id })
+    await saveLyrics()
+    autoSyncPreview.value = null
+    activeTab.value = 'synced'
+    toast.success('Auto-sync result applied')
+  } catch (error) {
+    console.error(error)
+    toast.error(`Failed to apply auto-sync result: ${error}`)
+  }
+}
+
+const discardAutoSyncPreview = () => {
+  autoSyncPreview.value = null
+  initializeLyrics()
+  activeTab.value = 'plain'
 }
 
 watch(activeTab, value => {
@@ -441,28 +645,19 @@ const { bindHotkeys, unbindHotkeys } = useEditLyricsV2Hotkeys({
   resetFontSize: resetCodemirrorFontSize,
 })
 
-onMounted(() => {
+onMounted(async () => {
   disableHotkey()
 
   // Initialize lyrics from props
   initializeLyrics()
-
-  // Handle playback - ensure correct audio source is loaded
-  const isPlayingCorrectTrack =
-    audioSourceRef.value?.type === 'library'
-      ? playingTrack.value?.id === audioSourceRef.value?.id
-      : playingTrack.value?.file_path === audioSourceRef.value?.file_path
-
-  if (!playingTrack.value || !isPlayingCorrectTrack) {
-    playTrack(audioSourceRef.value)
-    pause()
-  }
+  await restoreAutoSyncReviewDraft()
 
   bindHotkeys()
   bindSyncedHotkeys()
 })
 
 onUnmounted(() => {
+  clearLinePreview()
   unbindSyncedHotkeys()
   unbindHotkeys()
   enableHotkey()

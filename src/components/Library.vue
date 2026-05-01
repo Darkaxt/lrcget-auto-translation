@@ -11,6 +11,7 @@
       @manage-directories="$emit('manageDirectories')"
       @export-all-lyrics="handleExportAllLyrics"
       @show-export-viewer="openExportViewer"
+      @show-auto-sync-viewer="openAutoSyncViewer"
     />
 
     <div class="relative grow overflow-hidden">
@@ -57,6 +58,7 @@ import ArtistList from './library/ArtistList.vue'
 import MyLrclib from './library/MyLrclib.vue'
 import DownloadViewer from './library/DownloadViewer.vue'
 import ExportViewer from './library/ExportViewer.vue'
+import AutoSyncViewer from './library/AutoSyncViewer.vue'
 import Config from './library/Config.vue'
 import About from './About.vue'
 import { useToast } from 'vue-toastification'
@@ -123,6 +125,15 @@ const { open: openExportViewer, close: closeExportViewer } = useModal({
   attrs: {
     onClose() {
       closeExportViewer()
+    },
+  },
+})
+
+const { open: openAutoSyncViewer, close: closeAutoSyncViewer } = useModal({
+  component: AutoSyncViewer,
+  attrs: {
+    onClose() {
+      closeAutoSyncViewer()
     },
   },
 })

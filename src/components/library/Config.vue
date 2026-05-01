@@ -274,6 +274,171 @@
       </div>
 
       <div>
+        <label class="group-label mb-4">Auto-sync</label>
+
+        <div class="flex items-start mb-4">
+          <CheckboxButton
+            id="auto-sync-enabled"
+            v-model="autoSyncEnabled"
+            name="auto-sync-enabled"
+          >
+            Auto-sync plain lyrics after download
+          </CheckboxButton>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-backend">Backend</label>
+            <select id="auto-sync-backend" v-model="autoSyncBackend" class="input px-3 h-8">
+              <option value="qwen3_asr_cpp">Qwen3 ASR CPP</option>
+            </select>
+          </div>
+
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-save-policy">Save policy</label>
+            <select id="auto-sync-save-policy" v-model="autoSyncSavePolicy" class="input px-3 h-8">
+              <option value="preview">Preview</option>
+              <option value="auto_high_confidence">Auto-save high confidence</option>
+              <option value="always">Always save</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-model">ASR model</label>
+            <input
+              id="auto-sync-model"
+              v-model="autoSyncModel"
+              type="text"
+              class="input px-4 h-8"
+            />
+          </div>
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-aligner-model"
+              >Aligner model</label
+            >
+            <input
+              id="auto-sync-aligner-model"
+              v-model="autoSyncAlignerModel"
+              type="text"
+              class="input px-4 h-8"
+            />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-confidence-threshold"
+              >Confidence threshold</label
+            >
+            <input
+              id="auto-sync-confidence-threshold"
+              v-model.number="autoSyncConfidenceThreshold"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              class="input px-4 h-8"
+            />
+          </div>
+          <div class="flex flex-col">
+            <label class="block mb-2 child-label" for="auto-sync-language-override"
+              >Language override</label
+            >
+            <input
+              id="auto-sync-language-override"
+              v-model="autoSyncLanguageOverride"
+              type="text"
+              placeholder="auto"
+              class="input px-4 h-8"
+            />
+          </div>
+        </div>
+
+        <div class="flex items-start mb-4">
+          <CheckboxButton
+            id="auto-sync-auto-download"
+            v-model="autoSyncAutoDownload"
+            name="auto-sync-auto-download"
+          >
+            Download missing engine and models automatically
+          </CheckboxButton>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            class="button h-8 px-3 rounded"
+            :class="isAutoSyncAssetBusy ? 'button-disabled' : 'button-normal'"
+            :disabled="isAutoSyncAssetBusy"
+            @click="loadAutoSyncAssets"
+          >
+            Verify assets
+          </button>
+          <button
+            class="button h-8 px-3 rounded"
+            :class="isAutoSyncAssetBusy ? 'button-disabled' : 'button-normal'"
+            :disabled="isAutoSyncAssetBusy"
+            @click="downloadAutoSyncEngine"
+          >
+            {{ downloadEngineButtonLabel }}
+          </button>
+          <button
+            class="button h-8 px-3 rounded"
+            :class="isAutoSyncAssetBusy ? 'button-disabled' : 'button-normal'"
+            :disabled="isAutoSyncAssetBusy"
+            @click="downloadAutoSyncModels"
+          >
+            {{ downloadModelsButtonLabel }}
+          </button>
+          <button
+            class="button h-8 px-3 rounded"
+            :class="isAutoSyncAssetBusy ? 'button-disabled' : 'button-normal'"
+            :disabled="isAutoSyncAssetBusy"
+            @click="testAutoSyncEngine"
+          >
+            {{ testEngineButtonLabel }}
+          </button>
+        </div>
+
+        <div
+          v-if="isAutoSyncAssetBusy"
+          class="mt-3 rounded border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 p-3"
+        >
+          <div class="flex items-center justify-between gap-3 text-xs font-bold mb-2">
+            <span class="text-neutral-800 dark:text-neutral-200">
+              {{ autoSyncAssetBusyLabel }}
+            </span>
+            <span class="text-neutral-600 dark:text-neutral-400">
+              {{ activeAutoSyncProgressLabel }}
+            </span>
+          </div>
+          <div class="h-2 rounded-full bg-neutral-300 dark:bg-neutral-700 overflow-hidden">
+            <div
+              class="h-full bg-hoa-1100 transition-[width]"
+              :style="{ width: `${activeAutoSyncProgressPercent}%` }"
+            />
+          </div>
+          <div class="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+            {{ activeAutoSyncBytesLabel }}
+          </div>
+        </div>
+
+        <div v-if="autoSyncAssets.length > 0" class="mt-3 flex flex-col gap-1">
+          <div
+            v-for="asset in autoSyncAssets"
+            :key="asset.id"
+            class="text-xs text-neutral-700 dark:text-neutral-300"
+          >
+            <span class="font-bold">{{ asset.name }}:</span>
+            <span :class="asset.installed ? 'text-green-700 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-400'">
+              {{ asset.installed ? 'installed' : 'missing' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div>
         <label class="group-label mb-4">Experimental</label>
 
         <div class="flex items-start">
@@ -301,21 +466,31 @@
     </div>
 
     <template #footer>
-      <button class="button button-primary px-8 py-2 rounded-full" @click="save">Save</button>
+      <button
+        class="button px-8 py-2 rounded-full"
+        :class="isAutoSyncAssetBusy ? 'button-disabled' : 'button-primary'"
+        :disabled="isAutoSyncAssetBusy"
+        @click="save"
+      >
+        Save
+      </button>
     </template>
   </BaseModal>
 </template>
 
 <script setup>
 import { invoke } from '@tauri-apps/api/core'
-import { ref, watch } from 'vue'
+import { listen } from '@tauri-apps/api/event'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useGlobalState } from '../../composables/global-state'
 import { usePlayer } from '@/composables/player.js'
+import { useToast } from 'vue-toastification'
 import RadioButton from '@/components/common/RadioButton.vue'
 import CheckboxButton from '@/components/common/CheckboxButton.vue'
 
 const { setThemeMode, setLrclibInstance } = useGlobalState()
 const { volume } = usePlayer()
+const toast = useToast()
 
 const emit = defineEmits(['close', 'refreshLibrary', 'fullScanLibrary', 'manageDirectories'])
 
@@ -340,6 +515,125 @@ const translationOpenaiBaseUrl = ref('')
 const translationOpenaiApiKey = ref('')
 const translationOpenaiModel = ref('')
 const showAdvancedGeminiModel = ref(false)
+const autoSyncEnabled = ref(false)
+const autoSyncBackend = ref('qwen3_asr_cpp')
+const autoSyncModel = ref('qwen3-asr-0.6b-q8_0.gguf')
+const autoSyncAlignerModel = ref('qwen3-forced-aligner-0.6b-q4_k_m.gguf')
+const autoSyncSavePolicy = ref('auto_high_confidence')
+const autoSyncConfidenceThreshold = ref(0.82)
+const autoSyncAutoDownload = ref(true)
+const autoSyncLanguageOverride = ref('')
+const autoSyncAssets = ref([])
+const isAutoSyncAssetBusy = ref(false)
+const autoSyncAssetOperation = ref('')
+const activeAutoSyncAssetId = ref('')
+const autoSyncAssetProgress = ref({})
+let unlistenAutoSyncAssetProgress = null
+
+const formatBytes = bytes => {
+  if (!Number.isFinite(bytes)) {
+    return ''
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+const assetNameById = assetId => {
+  const asset = autoSyncAssets.value.find(item => item.id === assetId)
+  return asset?.name || assetId || 'Auto-sync asset'
+}
+
+const activeAutoSyncProgress = computed(() => {
+  if (!activeAutoSyncAssetId.value) {
+    return null
+  }
+  return autoSyncAssetProgress.value[activeAutoSyncAssetId.value] || null
+})
+
+const activeAutoSyncProgressPercent = computed(() => {
+  const progress = activeAutoSyncProgress.value
+  if (!progress || !progress.totalBytes) {
+    return 8
+  }
+  return Math.min(100, Math.max(0, (progress.downloadedBytes / progress.totalBytes) * 100))
+})
+
+const activeAutoSyncProgressLabel = computed(() => {
+  const progress = activeAutoSyncProgress.value
+  if (!progress || !progress.totalBytes) {
+    return 'Preparing'
+  }
+  return `${Math.floor(activeAutoSyncProgressPercent.value)}%`
+})
+
+const activeAutoSyncBytesLabel = computed(() => {
+  const progress = activeAutoSyncProgress.value
+  if (!progress) {
+    return 'Waiting for download to start'
+  }
+  if (!progress.totalBytes) {
+    return `${formatBytes(progress.downloadedBytes)} downloaded`
+  }
+  return `${formatBytes(progress.downloadedBytes)} of ${formatBytes(progress.totalBytes)}`
+})
+
+const autoSyncAssetBusyLabel = computed(() => {
+  if (autoSyncAssetOperation.value === 'test') {
+    return 'Testing Qwen3 ASR CPP engine'
+  }
+  if (activeAutoSyncAssetId.value) {
+    return `Downloading ${assetNameById(activeAutoSyncAssetId.value)}`
+  }
+  if (autoSyncAssetOperation.value === 'models') {
+    return 'Preparing model downloads'
+  }
+  if (autoSyncAssetOperation.value === 'engine') {
+    return 'Preparing engine download'
+  }
+  return 'Working'
+})
+
+const downloadEngineButtonLabel = computed(() =>
+  isAutoSyncAssetBusy.value && autoSyncAssetOperation.value === 'engine' ? 'Downloading...' : 'Download engine'
+)
+
+const downloadModelsButtonLabel = computed(() =>
+  isAutoSyncAssetBusy.value && autoSyncAssetOperation.value === 'models' ? 'Downloading...' : 'Download models'
+)
+
+const testEngineButtonLabel = computed(() =>
+  isAutoSyncAssetBusy.value && autoSyncAssetOperation.value === 'test' ? 'Testing...' : 'Test engine'
+)
+
+const setAutoSyncAssetBusy = operation => {
+  isAutoSyncAssetBusy.value = true
+  autoSyncAssetOperation.value = operation
+}
+
+const clearAutoSyncAssetBusy = () => {
+  isAutoSyncAssetBusy.value = false
+  autoSyncAssetOperation.value = ''
+  activeAutoSyncAssetId.value = ''
+}
+
+const handleAutoSyncAssetProgress = payload => {
+  if (!payload?.assetId) {
+    return
+  }
+
+  activeAutoSyncAssetId.value = payload.assetId
+  autoSyncAssetProgress.value = {
+    ...autoSyncAssetProgress.value,
+    [payload.assetId]: payload,
+  }
+}
 
 const save = async () => {
   await invoke('set_config', {
@@ -365,6 +659,14 @@ const save = async () => {
     translationOpenaiBaseUrl: translationOpenaiBaseUrl.value,
     translationOpenaiApiKey: translationOpenaiApiKey.value,
     translationOpenaiModel: translationOpenaiModel.value,
+    autoSyncEnabled: autoSyncEnabled.value,
+    autoSyncBackend: autoSyncBackend.value,
+    autoSyncModel: autoSyncModel.value || 'qwen3-asr-0.6b-q8_0.gguf',
+    autoSyncAlignerModel: autoSyncAlignerModel.value || 'qwen3-forced-aligner-0.6b-q4_k_m.gguf',
+    autoSyncSavePolicy: autoSyncSavePolicy.value || 'auto_high_confidence',
+    autoSyncConfidenceThreshold: Number(autoSyncConfidenceThreshold.value) || 0.82,
+    autoSyncAutoDownload: autoSyncAutoDownload.value,
+    autoSyncLanguageOverride: autoSyncLanguageOverride.value || '',
   })
   setThemeMode(editingThemeMode.value)
   setLrclibInstance(editingLrclibInstance.value)
@@ -419,7 +721,105 @@ const beforeOpenHandler = async () => {
   translationOpenaiApiKey.value = config.translation_openai_api_key || ''
   translationOpenaiModel.value = config.translation_openai_model || ''
   showAdvancedGeminiModel.value = translationGeminiModel.value !== 'gemini-flash-latest'
+  autoSyncEnabled.value = config.auto_sync_enabled || false
+  autoSyncBackend.value = config.auto_sync_backend || 'qwen3_asr_cpp'
+  autoSyncModel.value = config.auto_sync_model || 'qwen3-asr-0.6b-q8_0.gguf'
+  autoSyncAlignerModel.value =
+    config.auto_sync_aligner_model || 'qwen3-forced-aligner-0.6b-q4_k_m.gguf'
+  autoSyncSavePolicy.value = config.auto_sync_save_policy || 'auto_high_confidence'
+  autoSyncConfidenceThreshold.value = config.auto_sync_confidence_threshold ?? 0.82
+  autoSyncAutoDownload.value = config.auto_sync_auto_download ?? true
+  autoSyncLanguageOverride.value = config.auto_sync_language_override || ''
+  await loadAutoSyncAssets()
 }
+
+const loadAutoSyncAssets = async () => {
+  try {
+    autoSyncAssets.value = await invoke('list_auto_sync_assets')
+  } catch (error) {
+    console.error(error)
+    toast.error(`Failed to verify auto-sync assets: ${error}`)
+  }
+}
+
+const downloadAutoSyncAsset = async assetId => {
+  activeAutoSyncAssetId.value = assetId
+  autoSyncAssetProgress.value = {
+    ...autoSyncAssetProgress.value,
+    [assetId]: {
+      assetId,
+      downloadedBytes: 0,
+      totalBytes: null,
+      done: false,
+    },
+  }
+  await invoke('download_auto_sync_asset', { assetId })
+  await loadAutoSyncAssets()
+}
+
+const downloadAutoSyncEngine = async () => {
+  if (isAutoSyncAssetBusy.value) {
+    return
+  }
+
+  setAutoSyncAssetBusy('engine')
+  try {
+    await downloadAutoSyncAsset('qwen3-asr-cpp-engine')
+    toast.success('Auto-sync engine downloaded')
+  } catch (error) {
+    console.error(error)
+    toast.error(`Failed to download auto-sync engine: ${error}`)
+  } finally {
+    clearAutoSyncAssetBusy()
+  }
+}
+
+const downloadAutoSyncModels = async () => {
+  if (isAutoSyncAssetBusy.value) {
+    return
+  }
+
+  setAutoSyncAssetBusy('models')
+  try {
+    await downloadAutoSyncAsset('qwen3-asr-0.6b-q8_0')
+    await downloadAutoSyncAsset('qwen3-forced-aligner-0.6b-q4_k_m')
+    toast.success('Auto-sync models downloaded')
+  } catch (error) {
+    console.error(error)
+    toast.error(`Failed to download auto-sync models: ${error}`)
+  } finally {
+    clearAutoSyncAssetBusy()
+  }
+}
+
+const testAutoSyncEngine = async () => {
+  if (isAutoSyncAssetBusy.value) {
+    return
+  }
+
+  setAutoSyncAssetBusy('test')
+  try {
+    const message = await invoke('test_auto_sync_engine')
+    toast.success(message)
+  } catch (error) {
+    console.error(error)
+    toast.error(`Auto-sync engine test failed: ${error}`)
+  } finally {
+    clearAutoSyncAssetBusy()
+  }
+}
+
+onMounted(async () => {
+  unlistenAutoSyncAssetProgress = await listen('auto-sync-asset-progress', event => {
+    handleAutoSyncAssetProgress(event.payload)
+  })
+})
+
+onUnmounted(() => {
+  if (unlistenAutoSyncAssetProgress) {
+    unlistenAutoSyncAssetProgress()
+  }
+})
 
 watch(downloadLyricsFor, newVal => {
   if (newVal === 'skipSynced') {

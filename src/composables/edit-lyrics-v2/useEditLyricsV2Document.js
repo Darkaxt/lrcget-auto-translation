@@ -52,7 +52,6 @@ export function useEditLyricsV2Document({ audioSource, lyricsfile, trackId, prog
     // Get lyrics content from lyricsfile prop, or empty string if none
     const lyricsfileContent = lyricsfile.value?.content ?? ''
 
-    console.log(lyricsfileContent)
     const parsed = parseLyricsfile(lyricsfileContent)
 
     plainLyrics.value = parsed.plainLyrics
@@ -62,7 +61,6 @@ export function useEditLyricsV2Document({ audioSource, lyricsfile, trackId, prog
     isInstrumental.value = parsed.isInstrumental
 
     lyricsfileDocument.value = parsed.document
-    console.log(lyricsfileDocument.value)
     isDirty.value = false
     isSyncedLineEditing.value = false
     ensureSelectedSyncedLine()
@@ -76,10 +74,16 @@ export function useEditLyricsV2Document({ audioSource, lyricsfile, trackId, prog
     isDirty.value = true
   }
 
-  const updateSyncedLines = lines => {
+  const replaceSyncedLines = (lines, { markDirty = true } = {}) => {
     syncedLines.value = lines
-    isDirty.value = true
+    if (markDirty) {
+      isDirty.value = true
+    }
     ensureSelectedSyncedLine()
+  }
+
+  const updateSyncedLines = lines => {
+    replaceSyncedLines(lines, { markDirty: true })
   }
 
   const addSyncedLineAt = lineIndex => {
@@ -324,9 +328,6 @@ export function useEditLyricsV2Document({ audioSource, lyricsfile, trackId, prog
         null,
     }
 
-    console.log(lyricsfileDocument.value)
-    console.log(trackData)
-
     return (
       serializeLyricsfile({
         track: trackData,
@@ -365,6 +366,7 @@ export function useEditLyricsV2Document({ audioSource, lyricsfile, trackId, prog
     isInstrumental,
     serializedLyricsfile,
     initializeLyrics,
+    replaceSyncedLines,
     updatePlainLyrics,
     updateSyncedLines,
     selectSyncedLine,

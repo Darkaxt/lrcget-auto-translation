@@ -21,6 +21,8 @@ pub struct PlayableTrack {
     pub lyricsfile_id: Option<i64>, // ID from lyricsfiles table
     pub translation_status: String,
     pub translation_target_language: Option<String>,
+    pub auto_sync_status: String,
+    pub auto_sync_confidence: Option<f64>,
 }
 
 impl From<PersistentTrack> for PlayableTrack {
@@ -41,6 +43,8 @@ impl From<PersistentTrack> for PlayableTrack {
             lyricsfile_id: track.lyricsfile_id,
             translation_status: track.translation_status,
             translation_target_language: track.translation_target_language,
+            auto_sync_status: track.auto_sync_status,
+            auto_sync_confidence: track.auto_sync_confidence,
         }
     }
 }
@@ -66,6 +70,8 @@ pub struct PersistentTrack {
     pub instrumental: bool,
     pub translation_status: String,
     pub translation_target_language: Option<String>,
+    pub auto_sync_status: String,
+    pub auto_sync_confidence: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -86,7 +92,7 @@ pub struct PersistentArtist {
     pub tracks_count: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PersistentConfig {
     pub skip_tracks_with_synced_lyrics: bool,
     pub skip_tracks_with_plain_lyrics: bool,
@@ -108,4 +114,12 @@ pub struct PersistentConfig {
     pub translation_openai_base_url: String,
     pub translation_openai_api_key: String,
     pub translation_openai_model: String,
+    pub auto_sync_enabled: bool,
+    pub auto_sync_backend: String,
+    pub auto_sync_model: String,
+    pub auto_sync_aligner_model: String,
+    pub auto_sync_save_policy: String,
+    pub auto_sync_confidence_threshold: f64,
+    pub auto_sync_auto_download: bool,
+    pub auto_sync_language_override: String,
 }

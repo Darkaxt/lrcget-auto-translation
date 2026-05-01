@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use kira::{
     sound::{
         streaming::{StreamingSoundData, StreamingSoundHandle},
@@ -9,6 +9,16 @@ use kira::{
 
 use crate::persistent_entities::PlayableTrack;
 use serde::Serialize;
+use std::fs::{self, File};
+use std::path::Path;
+use std::time::Duration;
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,17 +82,33 @@ impl Player {
 
     pub fn play(&mut self, track: PlayableTrack) -> Result<()> {
         let _ = self.stop();
+        let file_path = track.file_path.clone();
+        let sound_data = StreamingSoundData::from_file(&file_path)
+            .with_context(|| format!("Failed to open audio stream: {file_path}"))?;
+        let duration = sound_data.duration().as_secs_f64();
+        let sound_handle = self
+            .manager
+            .play(sound_data)
+            .with_context(|| format!("Audio backend failed to start playback: {file_path}"))?;
+
         self.track = Some(track);
+        self.duration = duration;
+        self.sound_handle = Some(sound_handle);
+        self.sound_handle
+            .as_mut()
+            .unwrap()
+            .set_volume(Self::volume_as_decibels(self.volume), Tween::default());
 
-        if let Some(ref mut track) = self.track {
-            let sound_data = StreamingSoundData::from_file(&track.file_path)?;
-
-            self.duration = sound_data.duration().as_secs_f64();
-            self.sound_handle = Some(self.manager.play(sound_data)?);
-            self.sound_handle
-                .as_mut()
-                .unwrap()
-                .set_volume(Self::volume_as_decibels(self.volume), Tween::default());
+        if should_check_for_immediate_stop(&file_path) {
+            std::thread::sleep(Duration::from_millis(150));
+            self.renew_state();
+            if matches!(self.status, PlayerStatus::Stopped) {
+                let duration = self.duration;
+                let _ = self.stop();
+                bail!(
+                    "Audio backend stopped immediately after opening {file_path} (duration {duration:.2}s)"
+                );
+            }
         }
 
         Ok(())
@@ -149,6 +175,127 @@ impl Player {
     }
 }
 
+fn should_check_for_immediate_stop(file_path: &str) -> bool {
+    Path::new(file_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("mp3"))
+        .unwrap_or(false)
+}
+
+pub fn decode_audio_to_playback_wav(input_path: &Path, output_path: &Path) -> Result<()> {
+    let file = File::open(input_path)
+        .with_context(|| format!("Failed to open audio file {}", input_path.display()))?;
+    let media_source = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(extension) = input_path.extension().and_then(|value| value.to_str()) {
+        hint.with_extension(extension);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            media_source,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .with_context(|| format!("Failed to probe audio file {}", input_path.display()))?;
+    let mut format = probed.format;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|track| {
+            track.codec_params.codec != CODEC_TYPE_NULL
+                && track.codec_params.sample_rate.is_some()
+                && track.codec_params.channels.is_some()
+        })
+        .or_else(|| format.default_track())
+        .ok_or_else(|| {
+            anyhow::anyhow!("No playable audio track found in {}", input_path.display())
+        })?;
+    let track_id = track.id;
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .with_context(|| format!("Failed to create decoder for {}", input_path.display()))?;
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut writer: Option<hound::WavWriter<std::io::BufWriter<File>>> = None;
+    let mut samples_written = 0usize;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(error))
+                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break
+            }
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
+            Err(error) => {
+                return Err(anyhow::anyhow!(error)).context("Failed to read audio packet")
+            }
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(error) => {
+                return Err(anyhow::anyhow!(error)).context("Failed to decode audio packet")
+            }
+        };
+
+        if writer.is_none() {
+            let spec = decoded.spec();
+            let channels = spec.channels.count().max(1).min(u16::MAX as usize) as u16;
+            writer = Some(
+                hound::WavWriter::create(
+                    output_path,
+                    hound::WavSpec {
+                        channels,
+                        sample_rate: spec.rate,
+                        bits_per_sample: 16,
+                        sample_format: hound::SampleFormat::Int,
+                    },
+                )
+                .with_context(|| {
+                    format!("Failed to create fallback WAV {}", output_path.display())
+                })?,
+            );
+        }
+
+        let mut sample_buffer =
+            SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+        sample_buffer.copy_interleaved_ref(decoded);
+        if let Some(writer) = writer.as_mut() {
+            for sample in sample_buffer.samples() {
+                let sample = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+                writer.write_sample(sample)?;
+                samples_written += 1;
+            }
+        }
+    }
+
+    let Some(writer) = writer else {
+        bail!("Audio decoder did not produce any samples");
+    };
+    writer.finalize()?;
+
+    if samples_written == 0 {
+        bail!("Audio decoder did not produce any samples");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::Player;
@@ -182,5 +329,47 @@ mod tests {
         let _ = Player::volume_as_decibels(0.5);
         let _ = Player::volume_as_decibels(1.0);
         let _ = Player::volume_as_decibels(0.0);
+    }
+
+    #[test]
+    fn detects_mp3_paths_for_immediate_stop_check() {
+        assert!(super::should_check_for_immediate_stop("song.MP3"));
+        assert!(!super::should_check_for_immediate_stop("song.wav"));
+        assert!(!super::should_check_for_immediate_stop("song"));
+    }
+
+    #[test]
+    fn decodes_audio_to_playback_wav_from_wav_source() {
+        let base = std::env::temp_dir().join(format!(
+            "lrcget-playback-decode-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&base);
+        let input = base.join("input.wav");
+        let output = base.join("output.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 8_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        {
+            let mut writer = hound::WavWriter::create(&input, spec).unwrap();
+            for index in 0..800 {
+                let sample = ((index as f32 / 800.0) * i16::MAX as f32).round() as i16;
+                writer.write_sample(sample).unwrap();
+            }
+            writer.finalize().unwrap();
+        }
+
+        super::decode_audio_to_playback_wav(&input, &output).unwrap();
+
+        let reader = hound::WavReader::open(&output).unwrap();
+        assert_eq!(reader.spec().channels, 1);
+        assert_eq!(reader.spec().sample_rate, 8_000);
+        assert!(reader.len() > 0);
+        let _ = std::fs::remove_file(input);
+        let _ = std::fs::remove_file(output);
+        let _ = std::fs::remove_dir(base);
     }
 }

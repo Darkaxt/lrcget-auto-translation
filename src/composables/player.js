@@ -23,32 +23,41 @@ listen('reload-track-id', async event => {
 })
 
 export function usePlayer() {
-  const playTrack = track => {
-    playingTrack.value = track
+  const playTrack = async track => {
+    const previousTrack = playingTrack.value
 
-    // Determine if this is a database track or a file-based track
-    if (track.id !== undefined && track.id !== null) {
-      // Database track - use track_id
-      invoke('play_track', {
-        trackId: track.id,
-        filePath: null,
-        title: track.title,
-        albumName: track.album_name,
-        artistName: track.artist_name,
-        albumArtistName: track.album_artist_name,
-        duration: track.duration,
-      })
-    } else if (track.file_path) {
-      // File-based track (from file picker) - use file_path with metadata
-      invoke('play_track', {
-        trackId: null,
-        filePath: track.file_path,
-        title: track.title,
-        albumName: track.album_name,
-        artistName: track.artist_name,
-        albumArtistName: track.album_artist_name,
-        duration: track.duration,
-      })
+    try {
+      // Determine if this is a database track or a file-based track
+      if (track.id !== undefined && track.id !== null) {
+        // Database track - use track_id
+        await invoke('play_track', {
+          trackId: track.id,
+          filePath: null,
+          title: track.title,
+          albumName: track.album_name,
+          artistName: track.artist_name,
+          albumArtistName: track.album_artist_name,
+          duration: track.duration,
+        })
+      } else if (track.file_path) {
+        // File-based track (from file picker) - use file_path with metadata
+        await invoke('play_track', {
+          trackId: null,
+          filePath: track.file_path,
+          title: track.title,
+          albumName: track.album_name,
+          artistName: track.artist_name,
+          albumArtistName: track.album_artist_name,
+          duration: track.duration,
+        })
+      } else {
+        throw new Error('No playable track path or library ID was provided')
+      }
+
+      playingTrack.value = track
+    } catch (error) {
+      playingTrack.value = previousTrack
+      throw error
     }
   }
 
@@ -57,7 +66,7 @@ export function usePlayer() {
       return
     }
 
-    invoke('pause_track')
+    return invoke('pause_track')
   }
 
   const resume = () => {
@@ -65,19 +74,19 @@ export function usePlayer() {
       return
     }
 
-    invoke('resume_track')
+    return invoke('resume_track')
   }
 
-  const seek = position => {
+  const seek = async position => {
     if (!playingTrack.value) {
       return
     }
 
     if (status.value === 'stopped') {
-      invoke('play_track', { trackId: playingTrack.value.id })
+      await playTrack(playingTrack.value)
     }
 
-    invoke('seek_track', { position })
+    return invoke('seek_track', { position })
   }
 
   const stop = () => {
@@ -85,11 +94,11 @@ export function usePlayer() {
       return
     }
 
-    invoke('stop_track')
+    return invoke('stop_track')
   }
 
   const setVolume = volume => {
-    invoke('set_volume', { volume })
+    return invoke('set_volume', { volume })
   }
 
   return {

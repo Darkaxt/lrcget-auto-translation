@@ -42,6 +42,7 @@ import { useGlobalState } from './composables/global-state'
 import { useDownloader } from '@/composables/downloader.js'
 import { useExporter } from '@/composables/export.js'
 import { useTranslator } from '@/composables/translator.js'
+import { useAutoSync } from '@/composables/auto-sync.js'
 import { usePlayer } from '@/composables/player.js'
 import { useToast } from 'vue-toastification'
 
@@ -50,13 +51,15 @@ const toast = useToast()
 const { themeMode, setThemeMode, setLrclibInstance } = useGlobalState()
 const { downloadNext } = useDownloader()
 const { exportNext } = useExporter()
-const { translateNext } = useTranslator()
+const { startTranslationWorkers } = useTranslator()
+const { startAutoSyncWorkers, startAutoSyncEventListeners } = useAutoSync()
 const { setVolume } = usePlayer()
 
 const loading = ref(true)
 const init = ref(false)
 const shouldScan = ref(false)
 const isProd = ref(import.meta.env.PROD)
+const NOTIFICATION_DRAIN_INTERVAL_MS = 1000
 
 const uninitializeLibrary = async () => {
   loading.value = true
@@ -92,7 +95,9 @@ onMounted(async () => {
   darkModeHandle(themeMode.value)
   downloadNext()
   exportNext()
-  translateNext()
+  startTranslationWorkers(3)
+  await startAutoSyncEventListeners()
+  startAutoSyncWorkers(1)
   drainNotifications()
 })
 
@@ -113,7 +118,7 @@ const drainNotifications = async () => {
         type: notification.type,
       })
     })
-  }, 100)
+  }, NOTIFICATION_DRAIN_INTERVAL_MS)
 }
 
 const darkModeHandle = async themeMode => {

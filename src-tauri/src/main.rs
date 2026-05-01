@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+pub mod autosync;
 pub mod db;
 pub mod export;
 pub mod library;
@@ -16,6 +17,7 @@ pub mod state;
 pub mod translation;
 pub mod utils;
 
+use anyhow::Context;
 use persistent_entities::{
     PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack, PlayableTrack,
 };
@@ -218,6 +220,14 @@ async fn set_config(
     translation_openai_base_url: &str,
     translation_openai_api_key: &str,
     translation_openai_model: &str,
+    auto_sync_enabled: bool,
+    auto_sync_backend: &str,
+    auto_sync_model: &str,
+    auto_sync_aligner_model: &str,
+    auto_sync_save_policy: &str,
+    auto_sync_confidence_threshold: f64,
+    auto_sync_auto_download: bool,
+    auto_sync_language_override: &str,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
     let conn_guard = app_state.db.lock().unwrap();
@@ -243,6 +253,14 @@ async fn set_config(
         translation_openai_base_url,
         translation_openai_api_key,
         translation_openai_model,
+        auto_sync_enabled,
+        auto_sync_backend,
+        auto_sync_model,
+        auto_sync_aligner_model,
+        auto_sync_save_policy,
+        auto_sync_confidence_threshold,
+        auto_sync_auto_download,
+        auto_sync_language_override,
         conn,
     )
     .map_err(|err| err.to_string())?;
@@ -303,6 +321,75 @@ async fn set_translation_config(
         translation_openai_base_url,
         translation_openai_api_key,
         translation_openai_model,
+        config.auto_sync_enabled,
+        &config.auto_sync_backend,
+        &config.auto_sync_model,
+        &config.auto_sync_aligner_model,
+        &config.auto_sync_save_policy,
+        config.auto_sync_confidence_threshold,
+        config.auto_sync_auto_download,
+        &config.auto_sync_language_override,
+        conn,
+    )
+    .map_err(|err| err.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_auto_sync_config(app_state: State<'_, AppState>) -> Result<PersistentConfig, String> {
+    get_config(app_state).await
+}
+
+#[tauri::command]
+async fn set_auto_sync_config(
+    auto_sync_enabled: bool,
+    auto_sync_backend: &str,
+    auto_sync_model: &str,
+    auto_sync_aligner_model: &str,
+    auto_sync_save_policy: &str,
+    auto_sync_confidence_threshold: f64,
+    auto_sync_auto_download: bool,
+    auto_sync_language_override: &str,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let config = {
+        let conn_guard = app_state.db.lock().unwrap();
+        let conn = conn_guard.as_ref().unwrap();
+        db::get_config(conn).map_err(|err| err.to_string())?
+    };
+
+    let conn_guard = app_state.db.lock().unwrap();
+    let conn = conn_guard.as_ref().unwrap();
+    db::set_config(
+        config.skip_tracks_with_synced_lyrics,
+        config.skip_tracks_with_plain_lyrics,
+        config.show_line_count,
+        config.try_embed_lyrics,
+        &config.theme_mode,
+        &config.lrclib_instance,
+        config.volume,
+        config.translation_auto_enabled,
+        &config.translation_target_language,
+        &config.translation_provider,
+        &config.translation_export_mode,
+        &config.translation_gemini_api_key,
+        &config.translation_gemini_model,
+        &config.translation_deepl_api_key,
+        &config.translation_google_api_key,
+        &config.translation_microsoft_api_key,
+        &config.translation_microsoft_region,
+        &config.translation_openai_base_url,
+        &config.translation_openai_api_key,
+        &config.translation_openai_model,
+        auto_sync_enabled,
+        auto_sync_backend,
+        auto_sync_model,
+        auto_sync_aligner_model,
+        auto_sync_save_policy,
+        auto_sync_confidence_threshold,
+        auto_sync_auto_download,
+        auto_sync_language_override,
         conn,
     )
     .map_err(|err| err.to_string())?;
@@ -737,6 +824,169 @@ async fn get_track_ids_requiring_translation(app_handle: AppHandle) -> Result<Ve
 }
 
 #[tauri::command]
+async fn prepare_existing_lyrics_translation_queue(
+    app_handle: AppHandle,
+) -> Result<db::PreparedTranslationQueue, String> {
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+    let provider = config.translation_provider.clone();
+    let provider_model = translation::provider_model_from_config(&config);
+    let target_language = translation::target_language_from_config(&config);
+    let settings_hash = translation::settings_hash_from_config(&config);
+
+    let prepared = app_handle
+        .db(|db| {
+            db::prepare_existing_lyrics_translation_queue(
+                &provider,
+                &provider_model,
+                &target_language,
+                &settings_hash,
+                db,
+            )
+        })
+        .map_err(|err| err.to_string())?;
+
+    for track_id in prepared.changed_track_ids.iter().copied() {
+        let _ = app_handle.emit("reload-track-id", track_id);
+    }
+
+    Ok(prepared)
+}
+
+#[tauri::command]
+async fn list_auto_sync_assets(
+    app_handle: AppHandle,
+) -> Result<Vec<autosync::AutoSyncAssetStatus>, String> {
+    autosync::list_auto_sync_assets(&app_handle).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn download_auto_sync_asset(
+    asset_id: String,
+    app_handle: AppHandle,
+) -> Result<autosync::AutoSyncAssetStatus, String> {
+    autosync::download_auto_sync_asset(app_handle, asset_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn test_auto_sync_engine(app_handle: AppHandle) -> Result<String, String> {
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+    autosync::test_qwen_engine(app_handle, config)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn prepare_auto_sync_queue(
+    app_handle: AppHandle,
+) -> Result<db::PreparedAutoSyncQueue, String> {
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+    let prepared = app_handle
+        .db(|db| db::prepare_auto_sync_queue(&config, db))
+        .map_err(|err| err.to_string())?;
+
+    for track_id in prepared.changed_track_ids.iter().copied() {
+        let _ = app_handle.emit("reload-track-id", track_id);
+    }
+
+    Ok(prepared)
+}
+
+#[tauri::command]
+async fn list_track_sync_results(
+    track_id: i64,
+    app_handle: AppHandle,
+) -> Result<Vec<autosync::LyricSync>, String> {
+    app_handle
+        .db(|db| db::list_lyric_syncs_for_track(track_id, db))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn auto_sync_track_lyrics(
+    track_id: i64,
+    app_handle: AppHandle,
+) -> Result<autosync::LyricSync, String> {
+    auto_sync_track_lyrics_internal(track_id, app_handle).await
+}
+
+#[tauri::command]
+async fn apply_sync_result_to_lyricsfile(
+    sync_id: i64,
+    app_handle: AppHandle,
+) -> Result<autosync::LyricSync, String> {
+    let sync = app_handle
+        .db(|db| db::get_lyric_sync_by_id(sync_id, db))
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Sync result not found".to_string())?;
+    let generated_lrc = sync
+        .generated_lrc
+        .clone()
+        .filter(|lrc| !lrc.trim().is_empty())
+        .ok_or_else(|| "Sync result has no generated LRC".to_string())?;
+    let track_id = sync
+        .track_id
+        .ok_or_else(|| "Sync result is not associated with a library track".to_string())?;
+
+    let mut applied = sync.clone();
+    applied.status = autosync::AUTO_SYNC_STATUS_SUCCEEDED.to_string();
+
+    app_handle
+        .db(|db| -> anyhow::Result<()> {
+            let track = db::get_track_by_id(track_id, db)?;
+            let parsed = lyricsfile::parse_lyricsfile(&sync.source_lyricsfile)?;
+            let metadata = lyricsfile::LyricsfileTrackMetadata::from_persistent_track(&track);
+            let updated = lyricsfile::build_lyricsfile(
+                &metadata,
+                parsed.plain_lyrics.as_deref(),
+                Some(&generated_lrc),
+            )
+            .ok_or_else(|| anyhow::anyhow!("Failed to build lyricsfile from sync result"))?;
+            db::upsert_lyricsfile_for_track(
+                track.id,
+                &track.title,
+                &track.album_name,
+                &track.artist_name,
+                track.duration,
+                &updated,
+                db,
+            )?;
+            let upsert = autosync::LyricSyncUpsert {
+                lyricsfile_id: sync.lyricsfile_id,
+                track_id: sync.track_id,
+                source_hash: sync.source_hash.clone(),
+                source_lyricsfile: sync.source_lyricsfile.clone(),
+                audio_hash: sync.audio_hash.clone(),
+                backend: sync.backend.clone(),
+                model: sync.model.clone(),
+                aligner_model: sync.aligner_model.clone(),
+                language: sync.language.clone(),
+                settings_hash: sync.settings_hash.clone(),
+                status: autosync::AUTO_SYNC_STATUS_SUCCEEDED.to_string(),
+                generated_lrc: sync.generated_lrc.clone(),
+                generated_lines_json: sync.generated_lines_json.clone(),
+                confidence: sync.confidence,
+                metrics_json: sync.metrics_json.clone(),
+                error_message: None,
+                engine_metadata_json: sync.engine_metadata_json.clone(),
+            };
+            db::upsert_lyric_sync(&upsert, db)?;
+            Ok(())
+        })
+        .map_err(|err| err.to_string())?;
+
+    let _ = app_handle.emit("reload-track-id", track_id);
+    Ok(applied)
+}
+
+#[tauri::command]
 async fn translate_track_lyrics(
     track_id: i64,
     app_handle: AppHandle,
@@ -784,6 +1034,359 @@ fn maybe_spawn_auto_translation(track_id: i64, app_handle: AppHandle) {
         }
         let _ = app_handle.emit("reload-track-id", track_id);
     });
+}
+
+fn maybe_spawn_auto_sync(track_id: i64, app_handle: AppHandle) {
+    let enabled = app_handle
+        .db(|db| db::get_config(db).map(|config| config.auto_sync_enabled))
+        .unwrap_or(false);
+
+    if !enabled {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = auto_sync_track_lyrics_internal(track_id, app_handle.clone()).await {
+            eprintln!("Auto-sync failed for track {}: {}", track_id, error);
+        }
+        let _ = app_handle.emit("reload-track-id", track_id);
+    });
+}
+
+async fn auto_sync_track_lyrics_internal(
+    track_id: i64,
+    app_handle: AppHandle,
+) -> Result<autosync::LyricSync, String> {
+    let track = app_handle
+        .db(|db| db::get_track_by_id(track_id, db))
+        .map_err(|err| err.to_string())?;
+    let config = app_handle
+        .db(|db| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+    let lyricsfile_id = track
+        .lyricsfile_id
+        .ok_or_else(|| "No lyricsfile is stored for this track".to_string())?;
+    let lyricsfile_content = track
+        .lyricsfile
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "No lyrics available to sync".to_string())?;
+    let parsed =
+        lyricsfile::parse_lyricsfile(&lyricsfile_content).map_err(|err| err.to_string())?;
+
+    if parsed.is_instrumental {
+        return Err("Instrumental tracks cannot be auto-synced".to_string());
+    }
+    if parsed
+        .synced_lyrics
+        .as_deref()
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .is_some()
+    {
+        return Err("Track already has timestamped lyrics".to_string());
+    }
+
+    let plain_lyrics = parsed
+        .plain_lyrics
+        .clone()
+        .filter(|content| !content.trim().is_empty())
+        .ok_or_else(|| "No plain lyrics available to sync".to_string())?;
+
+    let source_hash = translation::lyrics_source_hash(&lyricsfile_content);
+    let audio_hash = autosync::audio_hash(std::path::Path::new(&track.file_path))
+        .map_err(|err| format!("Failed to hash audio file: {err}"))?;
+    let backend = autosync::provider_name_from_config(&config);
+    let model = autosync::model_from_config(&config);
+    let aligner_model = autosync::aligner_model_from_config(&config);
+    let language = autosync::language_for_sync(&config, &plain_lyrics);
+    let settings_hash = autosync::settings_hash_from_config(&config);
+
+    let pending = autosync::LyricSyncUpsert {
+        lyricsfile_id,
+        track_id: Some(track_id),
+        source_hash: source_hash.clone(),
+        source_lyricsfile: lyricsfile_content.clone(),
+        audio_hash: audio_hash.clone(),
+        backend: backend.clone(),
+        model: model.clone(),
+        aligner_model: aligner_model.clone(),
+        language: language.clone(),
+        settings_hash: settings_hash.clone(),
+        status: autosync::AUTO_SYNC_STATUS_PENDING.to_string(),
+        generated_lrc: None,
+        generated_lines_json: None,
+        confidence: None,
+        metrics_json: None,
+        error_message: None,
+        engine_metadata_json: None,
+    };
+    app_handle
+        .db(|db| db::upsert_lyric_sync(&pending, db))
+        .map_err(|err| err.to_string())?;
+    let _ = app_handle.emit("reload-track-id", track_id);
+
+    let run_result = run_auto_sync_provider(
+        track.clone(),
+        config.clone(),
+        plain_lyrics.clone(),
+        language.clone(),
+        app_handle.clone(),
+    )
+    .await;
+
+    let upsert = match run_result {
+        Ok(generated) => {
+            let generated_lines_json =
+                serde_json::to_string(&generated.lines).map_err(|err| err.to_string())?;
+            let metrics_json =
+                serde_json::to_string(&generated.metrics).map_err(|err| err.to_string())?;
+            let policy = autosync::save_policy_from_config(&config);
+            let should_apply = autosync::should_auto_apply_sync_result(
+                &policy,
+                config.auto_sync_confidence_threshold,
+                &generated.metrics,
+            );
+            if should_apply {
+                let metadata = lyricsfile::LyricsfileTrackMetadata::from_persistent_track(&track);
+                let updated = lyricsfile::build_lyricsfile(
+                    &metadata,
+                    Some(&plain_lyrics),
+                    Some(&generated.synced_lrc),
+                )
+                .ok_or_else(|| "Failed to build auto-synced lyricsfile".to_string())?;
+                app_handle
+                    .db(|db| {
+                        db::upsert_lyricsfile_for_track(
+                            track.id,
+                            &track.title,
+                            &track.album_name,
+                            &track.artist_name,
+                            track.duration,
+                            &updated,
+                            db,
+                        )
+                    })
+                    .map_err(|err| err.to_string())?;
+            }
+
+            autosync::LyricSyncUpsert {
+                lyricsfile_id,
+                track_id: Some(track_id),
+                source_hash,
+                source_lyricsfile: lyricsfile_content,
+                audio_hash,
+                backend,
+                model,
+                aligner_model,
+                language: language.clone(),
+                settings_hash,
+                status: if should_apply {
+                    autosync::AUTO_SYNC_STATUS_SUCCEEDED
+                } else {
+                    autosync::AUTO_SYNC_STATUS_NEEDS_REVIEW
+                }
+                .to_string(),
+                generated_lrc: Some(generated.synced_lrc),
+                generated_lines_json: Some(generated_lines_json),
+                confidence: Some(generated.metrics.confidence),
+                metrics_json: Some(metrics_json),
+                error_message: None,
+                engine_metadata_json: Some(
+                    serde_json::json!({
+                        "backend": "qwen3_asr_cpp",
+                        "mode": "direct_align_or_transcribe_align",
+                        "language": language,
+                    })
+                    .to_string(),
+                ),
+            }
+        }
+        Err(error) => autosync::LyricSyncUpsert {
+            lyricsfile_id,
+            track_id: Some(track_id),
+            source_hash,
+            source_lyricsfile: lyricsfile_content,
+            audio_hash,
+            backend,
+            model,
+            aligner_model,
+            language,
+            settings_hash,
+            status: autosync::AUTO_SYNC_STATUS_FAILED.to_string(),
+            generated_lrc: None,
+            generated_lines_json: None,
+            confidence: None,
+            metrics_json: None,
+            error_message: Some(error.to_string()),
+            engine_metadata_json: None,
+        },
+    };
+
+    let sync_id = app_handle
+        .db(|db| db::upsert_lyric_sync(&upsert, db))
+        .map_err(|err| err.to_string())?;
+    let sync = app_handle
+        .db(|db| db::get_lyric_sync_by_id(sync_id, db))
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Auto-sync result disappeared after save".to_string())?;
+    let _ = app_handle.emit("reload-track-id", track_id);
+    Ok(sync)
+}
+
+async fn run_auto_sync_provider(
+    track: PersistentTrack,
+    config: PersistentConfig,
+    plain_lyrics: String,
+    language: String,
+    app_handle: AppHandle,
+) -> anyhow::Result<autosync::AutoSyncGenerated> {
+    ensure_auto_sync_assets(&app_handle, &config).await?;
+    let paths = autosync::qwen_engine_paths(&app_handle, &config)?;
+    let (wav_path, output_path) = autosync::temp_sync_paths(&app_handle, track.id)?;
+    let prepare_context = autosync::AutoSyncCommandContext {
+        track_id: track.id,
+        track_title: track.title.clone(),
+        artist_name: track.artist_name.clone(),
+        phase: "Preparing audio".to_string(),
+    };
+    let prepare_started_at = std::time::Instant::now();
+    autosync::emit_auto_sync_engine_started(
+        &app_handle,
+        &prepare_context,
+        "Decoding audio to 16 kHz mono WAV",
+    );
+    let input_path = std::path::PathBuf::from(&track.file_path);
+    let wav_for_decode = wav_path.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        autosync::decode_audio_to_16khz_mono_wav(&input_path, &wav_for_decode)
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!("Audio preparation task failed: {err}"))?
+    {
+        autosync::emit_auto_sync_engine_failed(
+            &app_handle,
+            &prepare_context,
+            &format!("Audio preparation failed: {error}"),
+            prepare_started_at.elapsed(),
+        );
+        return Err(error);
+    }
+    autosync::emit_auto_sync_engine_finished(
+        &app_handle,
+        &prepare_context,
+        "Audio prepared",
+        prepare_started_at.elapsed(),
+        None,
+    );
+
+    let _ = std::fs::remove_file(&output_path);
+    let alignment_lyrics = autosync::normalize_plain_lyrics_for_alignment(&plain_lyrics);
+    if alignment_lyrics.is_empty() {
+        anyhow::bail!("Plain lyrics are empty after removing blank lines");
+    }
+    let direct_context = autosync::AutoSyncCommandContext {
+        track_id: track.id,
+        track_title: track.title.clone(),
+        artist_name: track.artist_name.clone(),
+        phase: "Direct align".to_string(),
+    };
+    let direct_args = autosync::build_qwen_direct_align_args(
+        &paths,
+        &wav_path,
+        &alignment_lyrics,
+        &language,
+        &output_path,
+    );
+    let direct_result = autosync::run_qwen_alignment_command(
+        &app_handle,
+        direct_context,
+        &paths.executable_path,
+        &direct_args,
+        &output_path,
+    )
+    .await;
+
+    let command_output = match direct_result {
+        Ok(command_output) => command_output,
+        Err(direct_error) => {
+            let _ = std::fs::remove_file(&output_path);
+            let fallback_context = autosync::AutoSyncCommandContext {
+                track_id: track.id,
+                track_title: track.title.clone(),
+                artist_name: track.artist_name.clone(),
+                phase: "Fallback transcribe-align".to_string(),
+            };
+            let fallback_args =
+                autosync::build_qwen_transcribe_align_args(&paths, &wav_path, &output_path);
+            autosync::run_qwen_alignment_command(
+                &app_handle,
+                fallback_context,
+                &paths.executable_path,
+                &fallback_args,
+                &output_path,
+            )
+            .await
+            .with_context(|| format!("Direct alignment failed first: {direct_error}"))?
+        }
+    };
+
+    let parse_context = autosync::AutoSyncCommandContext {
+        track_id: track.id,
+        track_title: track.title.clone(),
+        artist_name: track.artist_name.clone(),
+        phase: "Building LRC".to_string(),
+    };
+    autosync::emit_auto_sync_engine_started(
+        &app_handle,
+        &parse_context,
+        "Parsing word timestamps and mapping them to lyric lines",
+    );
+    let started_at = std::time::Instant::now();
+    let words =
+        autosync::parse_qwen_alignment_json(&command_output.output_json).with_context(|| {
+            let output = command_output.captured_output.trim();
+            if output.is_empty() {
+                "Failed to parse Qwen alignment output".to_string()
+            } else {
+                format!("Failed to parse Qwen alignment output. Engine output: {output}")
+            }
+        })?;
+    let generated = autosync::generate_synced_lrc_from_words(&alignment_lyrics, &words)?;
+    autosync::emit_auto_sync_engine_finished(
+        &app_handle,
+        &parse_context,
+        "Generated synced lyrics",
+        started_at.elapsed(),
+        None,
+    );
+    Ok(generated)
+}
+
+async fn ensure_auto_sync_assets(
+    app_handle: &AppHandle,
+    config: &PersistentConfig,
+) -> anyhow::Result<()> {
+    let assets = autosync::list_auto_sync_assets(app_handle)?;
+    let missing = assets
+        .iter()
+        .filter(|asset| !asset.installed)
+        .map(|asset| asset.id.clone())
+        .collect::<Vec<_>>();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    if !config.auto_sync_auto_download {
+        anyhow::bail!("Auto-sync assets are missing: {}", missing.join(", "));
+    }
+
+    for asset_id in missing {
+        autosync::download_auto_sync_asset(app_handle.clone(), asset_id).await?;
+    }
+
+    Ok(())
 }
 
 async fn translate_track_lyrics_internal(
@@ -926,17 +1529,48 @@ async fn translate_track_lyrics_internal(
         source_lrc: source_lrc.clone(),
     };
 
-    let result = translation::request_translation(&config, &request)
-        .await
-        .and_then(|response_json| {
-            translation::validate_translation_lines(&source_lrc, &response_json)?;
-            let translated_lrc = translation::build_translated_lrc(
-                &source_lrc,
-                &response_json,
-                translation::TranslationExportMode::Translation,
-            )?;
-            Ok((response_json, translated_lrc))
-        });
+    let mut attempt_reports = Vec::new();
+    let mut result = None;
+
+    for attempt in 1..=translation::TRANSLATION_PROVIDER_MAX_ATTEMPTS {
+        let attempt_result = translation::request_translation(&config, &request)
+            .await
+            .and_then(|response_json| {
+                translation::validate_translation_lines(&source_lrc, &response_json)?;
+                let translated_lrc = translation::build_translated_lrc(
+                    &source_lrc,
+                    &response_json,
+                    translation::TranslationExportMode::Translation,
+                )?;
+                Ok((response_json, translated_lrc))
+            });
+
+        match attempt_result {
+            Ok(payload) => {
+                result = Some(Ok(payload));
+                break;
+            }
+            Err(error) => {
+                let retryable = translation::should_retry_translation_error(&error);
+                let error_report = translation::translation_error_report(&error);
+                attempt_reports.push(translation::TranslationAttemptReport {
+                    attempt,
+                    retryable,
+                    error: error_report.clone(),
+                });
+
+                if retryable && attempt < translation::TRANSLATION_PROVIDER_MAX_ATTEMPTS {
+                    tokio::time::sleep(translation::translation_retry_delay(attempt)).await;
+                    continue;
+                }
+
+                result = Some(Err(error_report));
+                break;
+            }
+        }
+    }
+
+    let result = result.unwrap_or_else(|| Err("Translation did not run".to_string()));
 
     let upsert = match result {
         Ok((response_json, translated_lrc)) => LyricTranslationUpsert {
@@ -945,17 +1579,36 @@ async fn translate_track_lyrics_internal(
             translated_lrc: Some(translated_lrc),
             error_message: None,
             provider_metadata_json: Some(
-                serde_json::json!({
-                    "requestedModel": provider_model,
-                    "provider": provider,
-                })
-                .to_string(),
+                translation::translation_provider_metadata_json(
+                    &provider,
+                    &provider_model,
+                    &attempt_reports,
+                    true,
+                )
+                .map_err(|err| err.to_string())?,
             ),
             ..pending
         },
         Err(error) => LyricTranslationUpsert {
             status: translation::TRANSLATION_STATUS_FAILED.to_string(),
-            error_message: Some(error.to_string()),
+            error_message: Some(if attempt_reports.len() > 1 {
+                format!(
+                    "Translation failed after {} attempts. Last error: {}",
+                    attempt_reports.len(),
+                    error
+                )
+            } else {
+                error
+            }),
+            provider_metadata_json: Some(
+                translation::translation_provider_metadata_json(
+                    &provider,
+                    &provider_model,
+                    &attempt_reports,
+                    false,
+                )
+                .map_err(|err| err.to_string())?,
+            ),
             ..pending
         },
     };
@@ -1043,6 +1696,12 @@ async fn download_lyrics(track_id: i64, app_handle: AppHandle) -> Result<String,
 
     app_handle.emit("reload-track-id", track_id).unwrap();
     maybe_spawn_auto_translation(track_id, app_handle.clone());
+    if !resolved.is_instrumental
+        && resolved.synced_lyrics.is_empty()
+        && !resolved.plain_lyrics.is_empty()
+    {
+        maybe_spawn_auto_sync(track_id, app_handle.clone());
+    }
 
     if resolved.is_instrumental {
         Ok("Marked track as instrumental".to_owned())
@@ -1107,6 +1766,12 @@ async fn apply_lyrics(
         }
     });
     maybe_spawn_auto_translation(track_id, app_handle.clone());
+    if !resolved.is_instrumental
+        && resolved.synced_lyrics.is_empty()
+        && !resolved.plain_lyrics.is_empty()
+    {
+        maybe_spawn_auto_sync(track_id, app_handle.clone());
+    }
 
     if resolved.is_instrumental {
         Ok("Marked track as instrumental".to_owned())
@@ -1590,17 +2255,100 @@ async fn play_track(
             lyricsfile_id: None,
             translation_status: "none".to_string(),
             translation_target_language: None,
+            auto_sync_status: "none".to_string(),
+            auto_sync_confidence: None,
         }
     } else {
         return Err("Either track_id or file_path must be provided".to_string());
     };
 
     let mut player_guard = app_state.player.lock().unwrap();
-    if let Some(ref mut player) = *player_guard {
-        player.play(playable_track).map_err(|err| err.to_string())?;
+    let Some(ref mut player) = *player_guard else {
+        return Err("Audio player is not initialized".to_string());
+    };
+    let direct_error = match player.play(playable_track.clone()) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    drop(player_guard);
+
+    if !should_try_playback_wav_fallback(&playable_track.file_path) {
+        return Err(direct_error.to_string());
     }
 
+    let fallback_path = prepare_playback_wav_fallback(&app_handle, &playable_track.file_path)
+        .map_err(|fallback_error| {
+            format!(
+                "Direct playback failed: {direct_error}. Fallback WAV preparation failed: {fallback_error}"
+            )
+        })?;
+    let mut fallback_track = playable_track;
+    fallback_track.file_path = fallback_path.to_string_lossy().to_string();
+
+    let mut player_guard = app_state.player.lock().map_err(|error| error.to_string())?;
+    let Some(ref mut player) = *player_guard else {
+        return Err("Audio player is not initialized".to_string());
+    };
+    player.play(fallback_track).map_err(|fallback_error| {
+        format!("Direct playback failed: {direct_error}. Fallback WAV playback failed: {fallback_error}")
+    })?;
+
     Ok(())
+}
+
+fn should_try_playback_wav_fallback(file_path: &str) -> bool {
+    !std::path::Path::new(file_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("wav"))
+        .unwrap_or(false)
+}
+
+fn prepare_playback_wav_fallback(
+    app_handle: &AppHandle,
+    source_file_path: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let source_path = std::path::Path::new(source_file_path);
+    let cache_path = playback_wav_fallback_path(app_handle, source_path)?;
+    if cache_path.exists() {
+        return Ok(cache_path);
+    }
+
+    let temp_path = cache_path.with_extension("wav.tmp");
+    let _ = std::fs::remove_file(&temp_path);
+    player::decode_audio_to_playback_wav(source_path, &temp_path)?;
+    std::fs::rename(&temp_path, &cache_path).with_context(|| {
+        format!(
+            "Failed to move fallback WAV {} to {}",
+            temp_path.display(),
+            cache_path.display()
+        )
+    })?;
+    Ok(cache_path)
+}
+
+fn playback_wav_fallback_path(
+    app_handle: &AppHandle,
+    source_path: &std::path::Path,
+) -> anyhow::Result<std::path::PathBuf> {
+    let metadata = std::fs::metadata(source_path)
+        .with_context(|| format!("Failed to inspect audio file {}", source_path.display()))?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let cache_key = xxhash_rust::xxh3::xxh3_64(
+        format!("{}:{}:{modified}", source_path.display(), metadata.len()).as_bytes(),
+    );
+    let cache_dir = app_handle
+        .path()
+        .app_cache_dir()
+        .context("Failed to resolve app cache directory")?
+        .join("playback");
+    std::fs::create_dir_all(&cache_dir)?;
+    Ok(cache_dir.join(format!("{cache_key:016x}.wav")))
 }
 
 #[tauri::command]
@@ -1655,14 +2403,16 @@ fn resolve_configured_export_lyrics(
         return Ok(Some(parsed_original));
     }
 
-    let source_lrc = parsed_original
+    let Some(source_lrc) = parsed_original
         .synced_lyrics
         .clone()
         .filter(|content| !content.trim().is_empty())
-        .ok_or_else(|| "No synced lyrics available for translated export".to_string())?;
-    let lyricsfile_id = track
-        .lyricsfile_id
-        .ok_or_else(|| "No lyricsfile ID available for translated export".to_string())?;
+    else {
+        return Ok(None);
+    };
+    let Some(lyricsfile_id) = track.lyricsfile_id else {
+        return Ok(None);
+    };
     let source_hash = translation::lyrics_source_hash(&lyricsfile_content);
     let provider_model = translation::provider_model_from_config(config);
     let settings_hash = translation::settings_hash_from_config(config);
@@ -1695,6 +2445,90 @@ fn resolve_configured_export_lyrics(
         synced_lyrics: Some(lrc),
         is_instrumental: false,
     }))
+}
+
+#[cfg(test)]
+mod export_resolution_tests {
+    use super::*;
+
+    fn test_config(export_mode: &str) -> PersistentConfig {
+        PersistentConfig {
+            skip_tracks_with_synced_lyrics: false,
+            skip_tracks_with_plain_lyrics: false,
+            show_line_count: true,
+            try_embed_lyrics: false,
+            theme_mode: "auto".to_string(),
+            lrclib_instance: "https://lrclib.net".to_string(),
+            volume: 1.0,
+            translation_auto_enabled: false,
+            translation_target_language: "English".to_string(),
+            translation_provider: "gemini".to_string(),
+            translation_export_mode: export_mode.to_string(),
+            translation_gemini_api_key: String::new(),
+            translation_gemini_model: "gemini-flash-latest".to_string(),
+            translation_deepl_api_key: String::new(),
+            translation_google_api_key: String::new(),
+            translation_microsoft_api_key: String::new(),
+            translation_microsoft_region: String::new(),
+            translation_openai_base_url: String::new(),
+            translation_openai_api_key: String::new(),
+            translation_openai_model: String::new(),
+            auto_sync_enabled: false,
+            auto_sync_backend: "qwen3_asr_cpp".to_string(),
+            auto_sync_model: autosync::DEFAULT_AUTO_SYNC_MODEL.to_string(),
+            auto_sync_aligner_model: autosync::DEFAULT_AUTO_SYNC_ALIGNER_MODEL.to_string(),
+            auto_sync_save_policy: autosync::DEFAULT_AUTO_SYNC_SAVE_POLICY.to_string(),
+            auto_sync_confidence_threshold: autosync::DEFAULT_AUTO_SYNC_CONFIDENCE_THRESHOLD,
+            auto_sync_auto_download: true,
+            auto_sync_language_override: String::new(),
+        }
+    }
+
+    fn test_track(lyricsfile: String) -> PersistentTrack {
+        PersistentTrack {
+            id: 42,
+            file_path: "C:/music/plain.flac".to_string(),
+            file_name: "plain.flac".to_string(),
+            title: "Plain".to_string(),
+            album_name: "Album".to_string(),
+            album_artist_name: None,
+            album_id: 1,
+            artist_name: "Artist".to_string(),
+            artist_id: 1,
+            image_path: None,
+            track_number: None,
+            txt_lyrics: None,
+            lrc_lyrics: None,
+            lyricsfile: Some(lyricsfile),
+            lyricsfile_id: Some(7),
+            duration: 180.0,
+            instrumental: false,
+            translation_status: "none".to_string(),
+            translation_target_language: None,
+            auto_sync_status: "none".to_string(),
+            auto_sync_confidence: None,
+        }
+    }
+
+    #[test]
+    fn translated_export_resolution_skips_plain_only_lyrics_without_error() {
+        let lyricsfile = lyricsfile::build_lyricsfile(
+            &lyricsfile::LyricsfileTrackMetadata::new("Plain", "Album", "Artist", 180.0),
+            Some("Hello world"),
+            None,
+        )
+        .unwrap();
+        let db = Connection::open_in_memory().unwrap();
+
+        let resolved = resolve_configured_export_lyrics(
+            &test_track(lyricsfile),
+            &test_config("translation"),
+            &db,
+        )
+        .unwrap();
+
+        assert!(resolved.is_none());
+    }
 }
 
 /// Detail for a single format export result
@@ -2013,6 +2847,8 @@ async fn main() {
             set_config,
             get_translation_config,
             set_translation_config,
+            get_auto_sync_config,
+            set_auto_sync_config,
             uninitialize_library,
             full_scan_library,
             scan_library,
@@ -2031,8 +2867,16 @@ async fn main() {
             get_artist_track_ids,
             list_track_translations,
             get_track_ids_requiring_translation,
+            prepare_existing_lyrics_translation_queue,
             translate_track_lyrics,
             test_translation_provider,
+            list_auto_sync_assets,
+            download_auto_sync_asset,
+            test_auto_sync_engine,
+            prepare_auto_sync_queue,
+            auto_sync_track_lyrics,
+            list_track_sync_results,
+            apply_sync_result_to_lyricsfile,
             download_lyrics,
             apply_lyrics,
             retrieve_lyrics,
