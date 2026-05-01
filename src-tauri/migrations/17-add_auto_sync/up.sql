@@ -1,0 +1,8 @@
+-- Compatibility placeholder.
+--
+-- Experimental auto-sync builds used migration 17 for Qwen/forced-alignment
+-- tables and config columns. The feature was removed from the shipped app, but
+-- users who tested those builds can already have PRAGMA user_version = 17.
+-- Keeping this migration as a no-op lets those databases open without treating
+-- them as newer than the application schema. Fresh installs simply advance to
+-- version 17 without creating any auto-sync schema.
