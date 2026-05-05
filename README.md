@@ -1,142 +1,127 @@
-# LRCGET
+# LRCGET AutoTranslation
 
-Utility for mass-downloading LRC synced lyrics for your offline music library.
+Unofficial fork of [LRCGET](https://github.com/tranxuanthang/lrcget) with local, user-owned lyric translation support.
 
-LRCGET will scan every files in your chosen directory for music files, then and try to download lyrics to a LRC files having the same name and save them to the same directory as your music files.
+LRCGET scans your music library, finds existing lyric state, and can download lyrics from [LRCLIB](https://lrclib.net). This fork keeps the upstream library/search/download/edit behavior and adds optional automatic translation rows stored locally alongside the original lyrics.
 
-LRCGET is the official client of [LRCLIB](https://lrclib.net) service.
+## Fork Features
+
+- Automatic lyric translation after download.
+- Manual/bulk translation for lyrics already stored in the local database.
+- Same-language detection, so English lyrics targeting English are marked `Already English` instead of being sent to a provider.
+- Translation status badges: `Pending`, `Translated`, `Already English`, and `Failed`.
+- Export modes for original lyrics, translated lyrics, or dual timestamp lyrics.
+- Provider support for Gemini, DeepL, Google Cloud Translate, Microsoft Translator, and OpenAI-compatible chat completion endpoints.
+- Gemini defaults to `gemini-flash-latest`.
+- Provider retries for transient timeout/rate-limit/server failures.
+
+Translations are local/user-owned data and are not published back to LRCLIB.
 
 ## Download
 
-🎉 Latest version: v2.1.0
+Latest packaged fork build: [v2.1.0-at.7](https://github.com/Darkaxt/lrcget-auto-translation/releases/tag/v2.1.0-at.7)
 
-Visit the [release page](https://github.com/tranxuanthang/lrcget/releases) to download.
+Windows:
 
-### Windows
+- EXE installer, recommended: [LRCGET-AutoTranslation-v2.1.0-at.7-win-x64-setup.exe](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.7/LRCGET-AutoTranslation-v2.1.0-at.7-win-x64-setup.exe)
+- MSI installer: [LRCGET-AutoTranslation-v2.1.0-at.7-win-x64.msi](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.7/LRCGET-AutoTranslation-v2.1.0-at.7-win-x64.msi)
+- Checksums: [SHA256SUMS.txt](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.7/SHA256SUMS.txt)
 
-EXE installer (recommended): [LRCGET_2.1.0_x64-setup.exe](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_x64-setup.exe)
+Linux and macOS fork binaries are not currently published. Use the upstream [LRCGET releases](https://github.com/tranxuanthang/lrcget/releases) if you need an official non-Windows build without the translation fork changes.
 
-MSI installer: [LRCGET_2.1.0_x64_en-US.msi](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_x64_en-US.msi)
+## Experimental Auto-Sync
 
-### Linux
+The Qwen/ASR auto-sync work was intentionally removed from `main` before shipping this fork. It is preserved for future recovery in:
 
-Flatpak build (recommended, for most Linux distros):
+[archive/autosync-experiment-2026-05-01](https://github.com/Darkaxt/lrcget-auto-translation/tree/archive/autosync-experiment-2026-05-01)
 
-<a href='https://flathub.org/en/apps/net.lrclib.lrcget'><img width='120' alt='Get LRCGET on Flathub' src='https://flathub.org/api/badge?locale=en'/></a>
-
-Deb packages (for Ubuntu 24.04+ and Linux Mint 22+): [LRCGET_2.1.0_amd64.deb](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_amd64.deb)
-
-RPM packages (for Fedora, openSUSE, etc.): [LRCGET-2.1.0-1.x86_64.rpm](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET-2.1.0-1.x86_64.rpm)
-
-AppImage (for most Linux distros): [LRCGET_2.1.0_amd64.AppImage](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_amd64.AppImage)
-
-### macOS
-
-Mac x64 (Intel): [LRCGET_2.1.0_x64.dmg](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_x64.dmg)
-
-Mac Apple Silicon: [LRCGET_2.1.0_aarch64.dmg](https://github.com/tranxuanthang/lrcget/releases/download/2.1.0/LRCGET_2.1.0_aarch64.dmg)
+That branch is experimental and not part of the packaged release.
 
 ## Screenshots
 
-![01.png](https://raw.githubusercontent.com/tranxuanthang/lrcget/9e0578bd9411fcc024a56d2f1108701751c5ec3a/screenshots/01.png)
+![Tracks view](screenshots/01.png)
 
 <details>
-<summary>Click to expand more screenshots</summary>
+<summary>More screenshots</summary>
 
-![02.png](https://raw.githubusercontent.com/tranxuanthang/lrcget/9e0578bd9411fcc024a56d2f1108701751c5ec3a/screenshots/02.png)
+![Albums view](screenshots/02.png)
 
-![03.png](https://raw.githubusercontent.com/tranxuanthang/lrcget/9e0578bd9411fcc024a56d2f1108701751c5ec3a/screenshots/03.png)
+![Artists view](screenshots/03.png)
 
-![04.png](https://raw.githubusercontent.com/tranxuanthang/lrcget/9e0578bd9411fcc024a56d2f1108701751c5ec3a/screenshots/04.png)
+![LRCLIB view](screenshots/04.png)
 
 </details>
 
-## Donation
+## Upstream Project
 
-Toss a coin to your developer?
+This fork is based on [tranxuanthang/lrcget](https://github.com/tranxuanthang/lrcget), the official client for [LRCLIB](https://lrclib.net).
 
-**GitHub Sponsors (Recommended - 100% of your support goes to the developer):**
+For upstream documentation, official multi-platform binaries, and general LRCGET support, see:
 
-https://github.com/sponsors/tranxuanthang
-
-**Buy Me a Coffee:**
-
-https://www.buymeacoffee.com/thangtran
-
-**Paypal:**
-
-https://paypal.me/tranxuanthang98
-
-**Monero (XMR):**
-
-```
-43ZN5qDdGQhPGthFnngD8rjCHYLsEFBcyJjDC1GPZzVxWSfT8R48QCLNGyy6Z9LvatF5j8kSgv23DgJpixJg8bnmMnKm3b7
-```
-
-**Litecoin (LTC):**
-
-```
-ltc1q7texq5qsp59gclqlwf6asrqmhm98gruvz94a48
-```
+- Upstream repository: [tranxuanthang/lrcget](https://github.com/tranxuanthang/lrcget)
+- Upstream releases: [tranxuanthang/lrcget/releases](https://github.com/tranxuanthang/lrcget/releases)
+- LRCLIB: [lrclib.net](https://lrclib.net)
 
 ## Troubleshooting
 
-**Audio cannot be played in Linux (Ubuntu and other distros)**
+**App will not open on Windows 10/11**
 
-Try to install `pipewire-alsa` package. For example, in Ubuntu or Debian-based distros:
+LRCGET depends on Microsoft WebView2. If Microsoft Edge or WebView2 was removed from Windows, reinstalling Microsoft Edge/WebView2 can fix startup issues. See upstream issue [tranxuanthang/lrcget#45](https://github.com/tranxuanthang/lrcget/issues/45).
 
-```
+**Audio cannot be played on Linux**
+
+Try installing `pipewire-alsa`. For Ubuntu or Debian-based distros:
+
+```shell
 sudo apt install pipewire-alsa
 ```
 
-**App won't open in Windows 10/11**
+**Scrollbar is invisible on Linux KDE Plasma**
 
-If you are using Windows 10 LTSC, or have tried running some scripts to debloat Windows 10 (which will uninstall Microsoft Edge and its webview component), you might have issues as LRCGET depends on WebView2. Reinstalling Microsoft Edge might fix the problem (see issue https://github.com/tranxuanthang/lrcget/issues/45).
-
-**Scrollbar is invisible in Linux (KDE Plasma 5/6)**
-
-The exact cause is still unknown, but it can be fixed by going to System Settings > Appearance > Global Theme > Application Style > Configure GNOME/GTK Application Style... > Change to something other than breeze (Awaita or Default) > Apply (see comment https://github.com/tranxuanthang/lrcget/issues/44#issuecomment-1962998268)
-
-## Contact
-
-If you prefer to contact by email:
-
-[hoangtudevops@protonmail.com](mailto:hoangtudevops@protonmail.com)
+This upstream issue can usually be fixed by changing the GNOME/GTK application style away from Breeze in KDE settings. See upstream comment [tranxuanthang/lrcget#44](https://github.com/tranxuanthang/lrcget/issues/44#issuecomment-1962998268).
 
 ## Development
 
 LRCGET is made with [Tauri](https://tauri.app).
 
-To start developing the application, you need to do the [prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites) steps according to your operating system.
+Development prerequisites:
 
-For example, you need the following components to start the development in Windows:
-
-- Microsoft Visual Studio C++ Build Tools
+- Microsoft Visual Studio C++ Build Tools on Windows
 - Rust 1.81.0 or higher
-- NodeJS v16.18.0 or higher
+- Node.js 16.18.0 or higher
+- Tauri prerequisites for your OS: [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
-Start the development window with the following command:
+Start the development app:
 
 ```shell
-cd lrcget
+git clone https://github.com/Darkaxt/lrcget-auto-translation.git
+cd lrcget-auto-translation
 npm install
 npm run tauri dev
 ```
 
-## Building
-
-Start the build process with the following command:
+Run checks:
 
 ```shell
-cd lrcget
+npm run lint
+npm run build
+cd src-tauri
+cargo test -- --nocapture
+```
+
+## Building
+
+Build the app:
+
+```shell
 npm install
 npm run tauri build
 ```
 
-Your built binaries are located at:
+Built binaries are written under:
 
-```
-./src-tauri/target/release/
+```text
+src-tauri/target/release/
 ```
 
-For more detailed instruction, follow the [building guide](https://tauri.app/v1/guides/building/) to build the application according to your OS platform.
+For platform-specific details, see the [Tauri distribution guide](https://tauri.app/distribute/).
