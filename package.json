@@ -11,7 +11,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
+    "test": "vitest run src/utils/word-tokenizer.test.js",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@iconify-json/mdi": "^1.2.3",
-    "@tauri-apps/cli": "^2.11.0",
+    "@tauri-apps/cli": "^2.11.2",
     "@vitejs/plugin-vue": "^6.0.6",
     "autoprefixer": "^10.4.12",
     "esbuild": "^0.28.0",
