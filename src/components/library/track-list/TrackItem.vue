@@ -30,13 +30,17 @@
         </div>
 
         <div class="gap-2 line-clamp-1">
-          <span class="text-sm text-neutral-500 transition dark:text-neutral-400">{{
-            track.album_name
-          }}</span>
-          <span class="text-neutral-500 h-full mx-1 flex-none dark:text-neutral-400">|</span>
-          <span class="text-sm text-neutral-500 transition dark:text-neutral-400">{{
-            track.artist_name
-          }}</span>
+          <span
+            class="text-sm text-neutral-500 transition dark:text-neutral-400 cursor-pointer hover:underline"
+            @click.stop="goToAlbum"
+            >{{ track.album_name }}</span
+          >
+          <span class="text-neutral-500 h-full mx-1 flex-none dark:text-neutral-400">·</span>
+          <span
+            class="text-sm text-neutral-500 transition dark:text-neutral-400 cursor-pointer hover:underline"
+            @click.stop="goToArtist"
+            >{{ track.artist_name }}</span
+          >
         </div>
       </div>
     </div>
@@ -141,9 +145,23 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { usePlayer } from '@/composables/player.js'
 import { useToast } from 'vue-toastification'
+import { useLibraryNavigation } from '@/composables/library-navigation.js'
 
 const { playTrack, playingTrack, status, pause, resume } = usePlayer()
 const toast = useToast()
+const { navigateToAlbum, navigateToArtist } = useLibraryNavigation()
+
+const goToAlbum = () => {
+  if (track.value?.album_id) {
+    navigateToAlbum(track.value.album_id)
+  }
+}
+
+const goToArtist = () => {
+  if (track.value?.artist_id) {
+    navigateToArtist(track.value.artist_id)
+  }
+}
 
 const { searchLyrics } = useSearchLyrics()
 const { editLyricsV2, editingAudioSource } = useEditLyricsV2()
@@ -151,8 +169,8 @@ const props = defineProps(['trackId', 'isShowTrackNumber'])
 const track = ref(null)
 const isTranslating = ref(false)
 
-const loadTrack = async () => {
-  const trackId = props.trackId
+const loadTrack = async (id = props.trackId) => {
+  const trackId = id
   const loadedTrack = await invoke('get_track', { trackId })
   if (props.trackId === trackId) {
     track.value = loadedTrack
@@ -235,6 +253,15 @@ const openEditLyricsV2 = track => {
 
 let unlisten = null
 
+watch(
+  () => props.trackId,
+  async newId => {
+    if (newId) {
+      await loadTrack(newId)
+    }
+  }
+)
+
 onMounted(async () => {
   await loadTrack()
 
@@ -245,13 +272,6 @@ onMounted(async () => {
     }
   })
 })
-
-watch(
-  () => props.trackId,
-  async () => {
-    await loadTrack()
-  }
-)
 
 onUnmounted(() => {
   if (unlisten) {
