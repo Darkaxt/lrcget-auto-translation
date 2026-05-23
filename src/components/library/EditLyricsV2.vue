@@ -50,6 +50,14 @@
         </button>
         </div>
       </div>
+
+      <button
+        class="button button-normal p-1.5 rounded-full text-sm h-8 w-8 ml-2"
+        title="Keyboard shortcuts"
+        @click="openShortcutsModal"
+      >
+        <Keyboard class="text-base" />
+      </button>
     </template>
 
     <div class="grow overflow-hidden flex flex-col gap-2 h-full">
@@ -118,6 +126,7 @@
         @update-line-text="handleUpdateLineText"
         @mark-as-instrumental="setInstrumental(true)"
       />
+
     </div>
   </BaseModal>
 </template>
@@ -133,6 +142,8 @@ import EditLyricsV2HeaderActions from '@/components/library/edit-lyrics-v2/EditL
 import EditLyricsV2PlayerBar from '@/components/library/edit-lyrics-v2/EditLyricsV2PlayerBar.vue'
 import PlainLyricsCodeEditor from '@/components/library/edit-lyrics-v2/PlainLyricsCodeEditor.vue'
 import SyncedLyricsEditor from '@/components/library/edit-lyrics-v2/SyncedLyricsEditor.vue'
+import KeyboardShortcutsModal from '@/components/library/edit-lyrics-v2/KeyboardShortcutsModal.vue'
+import Keyboard from '~icons/mdi/keyboard'
 import { useEditLyricsV2Document } from '@/composables/edit-lyrics-v2/useEditLyricsV2Document.js'
 import { useEditLyricsV2Hotkeys } from '@/composables/edit-lyrics-v2/useEditLyricsV2Hotkeys.js'
 import { useEditLyricsV2Publish } from '@/composables/edit-lyrics-v2/useEditLyricsV2Publish.js'
@@ -421,6 +432,16 @@ const { open: openDebugModal, close: closeDebugModal } = useModal({
     content: debugModalContent,
     onClose() {
       closeDebugModal()
+    },
+  },
+})
+
+const { open: openShortcutsModal, close: closeShortcutsModal } = useModal({
+  component: KeyboardShortcutsModal,
+  attrs: {
+    activeTab,
+    onClose() {
+      closeShortcutsModal()
     },
   },
 })
