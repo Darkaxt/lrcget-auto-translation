@@ -105,9 +105,11 @@
         :model-value="syncedLines"
         :can-import-from-plain="hasPlainLyrics"
         :selected-line-index="selectedSyncedLineIndex"
+        :selected-line-indices="selectedSyncedLineIndices"
         :progress-ms="progressMs"
         @update:model-value="updateSyncedLines"
         @update:selected-line-index="selectSyncedLine"
+        @update:selected-line-indices="handleUpdateSelectedLineIndices"
         @editing-state-change="setSyncedLineEditingState"
         @play-line="playLine"
         @sync-line="syncLineToCurrentProgress"
@@ -117,6 +119,9 @@
         @rewind-end="rewindEndBy100"
         @forward-end="forwardEndBy100"
         @delete-line="deleteSyncedLine"
+        @bulk-rewind-lines="bulkRewindLines"
+        @bulk-forward-lines="bulkForwardLines"
+        @bulk-delete-lines="bulkDeleteLines"
         @add-line-at="addSyncedLineAt"
         @import-lines-from-plain="importSyncedLinesFromPlain"
         @import-lrc-file="handleImportLrcFile"
@@ -199,6 +204,7 @@ const {
   lyricsfileDocument,
   isDirty,
   selectedSyncedLineIndex,
+  selectedSyncedLineIndices,
   isSyncedLineEditing,
   hasPlainLyrics,
   selectedLineExists,
@@ -208,9 +214,15 @@ const {
   updatePlainLyrics,
   updateSyncedLines,
   selectSyncedLine,
+  selectSyncedLineRange,
+  toggleSyncedLineSelection,
+  clearSyncedLineSelection,
   setSyncedLineEditingState,
   addSyncedLineAt,
   deleteSyncedLine,
+  bulkDeleteLines,
+  bulkRewindLines,
+  bulkForwardLines,
   importSyncedLinesFromPlain,
   syncLineToCurrentProgress,
   rewindLineBy100: rewindLineTimestampBy100,
@@ -320,6 +332,21 @@ const handleUpdateLineText = (lineIndex, newText) => {
   updateLineText(lineIndex, newText)
 }
 
+const handleUpdateSelectedLineIndices = payload => {
+  if (payload?.clear) {
+    clearSyncedLineSelection()
+    return
+  }
+  if (typeof payload === 'number') {
+    // Ctrl/Cmd toggle
+    toggleSyncedLineSelection(payload)
+    return
+  }
+  if (Number.isInteger(payload?.start) && Number.isInteger(payload?.end)) {
+    selectSyncedLineRange(payload.start, payload.end)
+  }
+}
+
 const handleImportLrcFile = async () => {
   try {
     const filePath = await open({
@@ -406,11 +433,14 @@ const { bindSyncedHotkeys, unbindSyncedHotkeys } = useEditLyricsV2SyncedHotkeys(
   isSyncedLineEditing,
   selectedLineExists,
   selectedSyncedLineIndex,
+  selectedSyncedLineIndices,
   syncedLines,
   selectSyncedLine,
+  clearSyncedLineSelection,
   syncLineToCurrentProgress,
   rewindLineBy100: rewindLineTimestampBy100,
   forwardLineBy100: forwardLineTimestampBy100,
+  playLine,
 })
 
 const changeCodemirrorFontSizeBy = offset => {
