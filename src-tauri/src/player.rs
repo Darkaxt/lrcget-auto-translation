@@ -40,6 +40,7 @@ pub struct Player {
     pub progress: f64,
     pub duration: f64,
     pub volume: f64,
+    pub playback_speed: f64,
 }
 
 impl Player {
@@ -54,6 +55,7 @@ impl Player {
             progress: 0.0,
             duration: 0.0,
             volume: initial_volume,
+            playback_speed: 1.0,
         })
     }
 
@@ -98,6 +100,11 @@ impl Player {
             .as_mut()
             .unwrap()
             .set_volume(Self::volume_as_decibels(self.volume), Tween::default());
+
+        self.sound_handle
+            .as_mut()
+            .unwrap()
+            .set_playback_rate(self.playback_speed, Tween::default());
 
         if should_check_for_immediate_stop(&file_path) {
             std::thread::sleep(Duration::from_millis(150));
@@ -172,6 +179,16 @@ impl Player {
             sound_handle.set_volume(Self::volume_as_decibels(volume), Tween::default());
         }
         self.volume = volume;
+    }
+
+    pub fn set_playback_speed(&mut self, playback_speed: f64) {
+        let clamped_speed = playback_speed.clamp(0.5, 2.0);
+
+        if let Some(ref mut sound_handle) = self.sound_handle {
+            sound_handle.set_playback_rate(clamped_speed, Tween::default());
+        }
+
+        self.playback_speed = clamped_speed;
     }
 }
 
