@@ -21,7 +21,6 @@ export function useEditLyricsV2Playback({
     linePreviewTimer = null
   }
 
-  // Helper to check if the playing track matches the audio source
   const isPlayingCorrectTrack = () => {
     if (!playingTrack.value || !audioSource.value) {
       return false
@@ -31,7 +30,48 @@ export function useEditLyricsV2Playback({
       : playingTrack.value.file_path === audioSource.value.file_path
   }
 
-  const playLine = async lineIndex => {
+  const getLineEndMs = lineIndex => {
+    const line = syncedLines.value[lineIndex]
+    const lineStartMs = line?.start_ms
+    if (!Number.isFinite(lineStartMs)) {
+      return null
+    }
+
+    if (Number.isFinite(line.end_ms)) {
+      return line.end_ms
+    }
+
+    const nextLineStartMs = syncedLines.value[lineIndex + 1]?.start_ms
+    if (Number.isFinite(nextLineStartMs) && nextLineStartMs > lineStartMs) {
+      return nextLineStartMs
+    }
+
+    return null
+  }
+
+  const scheduleLinePreviewStop = (lineIndex, playbackStartMs) => {
+    const lineEndMs = getLineEndMs(lineIndex)
+    if (
+      !Number.isFinite(playbackStartMs) ||
+      !Number.isFinite(lineEndMs) ||
+      lineEndMs <= playbackStartMs
+    ) {
+      return
+    }
+
+    linePreviewTimer = setTimeout(async () => {
+      linePreviewTimer = null
+      try {
+        if (isPlayingCorrectTrack()) {
+          await pause?.()
+        }
+      } catch (error) {
+        onPlaybackError?.(error)
+      }
+    }, lineEndMs - playbackStartMs)
+  }
+
+  const playLineAtOffset = async (lineIndex, offsetMs = 0) => {
     try {
       if (!audioSource.value) {
         return
@@ -39,9 +79,9 @@ export function useEditLyricsV2Playback({
 
       clearLinePreview()
 
-      const line = syncedLines.value[lineIndex]
-      const lineStartMs = line?.start_ms
-      const seekTo = Number.isFinite(lineStartMs) ? lineStartMs / 1000 : progress.value
+      const lineStartMs = syncedLines.value[lineIndex]?.start_ms
+      const baseStartMs = Number.isFinite(lineStartMs) ? lineStartMs : progress.value * 1000
+      const playbackStartMs = Math.max(0, baseStartMs + offsetMs)
 
       if (!isPlayingCorrectTrack()) {
         await playTrack(audioSource.value)
@@ -49,11 +89,15 @@ export function useEditLyricsV2Playback({
         await resume()
       }
 
-      await seek(seekTo)
-      scheduleLinePreviewStop(lineIndex, lineStartMs)
+      await seek(playbackStartMs / 1000)
+      scheduleLinePreviewStop(lineIndex, playbackStartMs)
     } catch (error) {
       onPlaybackError?.(error)
     }
+  }
+
+  const playLine = async lineIndex => {
+    return playLineAtOffset(lineIndex, 0)
   }
 
   const resumeOrPlay = async () => {
@@ -90,47 +134,11 @@ export function useEditLyricsV2Playback({
     }
   }
 
-  const scheduleLinePreviewStop = (lineIndex, lineStartMs) => {
-    const lineEndMs = getLineEndMs(lineIndex)
-    if (!Number.isFinite(lineStartMs) || !Number.isFinite(lineEndMs) || lineEndMs <= lineStartMs) {
-      return
-    }
-
-    linePreviewTimer = setTimeout(async () => {
-      linePreviewTimer = null
-      try {
-        if (isPlayingCorrectTrack()) {
-          await pause?.()
-        }
-      } catch (error) {
-        onPlaybackError?.(error)
-      }
-    }, lineEndMs - lineStartMs)
-  }
-
-  const getLineEndMs = lineIndex => {
-    const line = syncedLines.value[lineIndex]
-    const lineStartMs = line?.start_ms
-    if (!Number.isFinite(lineStartMs)) {
-      return null
-    }
-
-    if (Number.isFinite(line.end_ms)) {
-      return line.end_ms
-    }
-
-    const nextLineStartMs = syncedLines.value[lineIndex + 1]?.start_ms
-    if (Number.isFinite(nextLineStartMs) && nextLineStartMs > lineStartMs) {
-      return nextLineStartMs
-    }
-
-    return null
-  }
-
   return {
     clearLinePreview,
     pauseEditorPlayback,
     playLine,
+    playLineAtOffset,
     resumeOrPlay,
     seekEditorPlayback,
   }

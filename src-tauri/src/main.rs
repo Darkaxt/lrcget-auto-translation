@@ -15,6 +15,7 @@ pub mod scanner;
 pub mod state;
 pub mod translation;
 pub mod utils;
+pub mod word_segmentation;
 
 use anyhow::Context;
 use persistent_entities::{
@@ -2191,6 +2192,11 @@ async fn read_text_file(file_path: String) -> Result<String, String> {
     std::fs::read_to_string(&file_path).map_err(|err| format!("Failed to read file: {}", err))
 }
 
+#[tauri::command]
+async fn segment_words(text: String) -> Result<Vec<String>, String> {
+    Ok(word_segmentation::segment_words_for_timing(text.as_str()))
+}
+
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
@@ -2318,6 +2324,7 @@ async fn main() {
             prepare_lrclib_lyricsfile,
             refresh_lrclib_lyricsfile,
             read_text_file,
+            segment_words,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
