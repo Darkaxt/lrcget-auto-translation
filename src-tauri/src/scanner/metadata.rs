@@ -3,7 +3,7 @@ use lofty::error::LoftyError;
 use lofty::file::AudioFile;
 use lofty::file::TaggedFileExt;
 use lofty::read_from_path;
-use lofty::tag::Accessor;
+use lofty::tag::{Accessor, ItemKey, Tag};
 use std::path::Path;
 use thiserror::Error;
 
@@ -83,13 +83,11 @@ impl TrackMetadata {
             })?
             .to_string();
 
-        let artist = tag
-            .artist()
-            .ok_or_else(|| MetadataError::MissingField {
+        let artist =
+            metadata_artist_or_track_artists(&tag).ok_or_else(|| MetadataError::MissingField {
                 field: "artist".to_string(),
                 path: file_path.clone(),
-            })?
-            .to_string();
+            })?;
 
         // Album artist is optional, fallback to artist
         let album_artist = tag
@@ -111,6 +109,19 @@ impl TrackMetadata {
             track_number,
         })
     }
+}
+
+fn metadata_artist_or_track_artists(tag: &Tag) -> Option<String> {
+    tag.artist()
+        .map(|artist| artist.trim().to_string())
+        .filter(|artist| !artist.is_empty())
+        .or_else(|| {
+            tag.get_strings(ItemKey::TrackArtists)
+                .flat_map(|artists| artists.split([';', '/']))
+                .map(str::trim)
+                .find(|artist| !artist.is_empty())
+                .map(str::to_string)
+        })
 }
 
 impl LyricsInfo {
@@ -176,6 +187,7 @@ fn metadata_title_or_file_name(title: Option<&str>, file_name: &str) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lofty::tag::{ItemValue, TagItem, TagType};
 
     #[test]
     fn metadata_title_uses_tag_title_when_present() {
@@ -198,6 +210,50 @@ mod tests {
         assert_eq!(
             metadata_title_or_file_name(Some("   "), "01 - File Name.flac"),
             Some("01 - File Name.flac".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_artist_uses_artist_tag_when_present() {
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.insert_text(ItemKey::TrackArtist, "Primary Artist".to_string());
+        tag.insert_text(ItemKey::TrackArtists, "Fallback Artist".to_string());
+
+        assert_eq!(
+            metadata_artist_or_track_artists(&tag),
+            Some("Primary Artist".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_artist_falls_back_to_first_delimited_track_artists_value() {
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.insert_text(
+            ItemKey::TrackArtists,
+            "  First Artist ; Second Artist / Third Artist ".to_string(),
+        );
+
+        assert_eq!(
+            metadata_artist_or_track_artists(&tag),
+            Some("First Artist".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_artist_falls_back_to_first_non_empty_track_artists_item() {
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.push(TagItem::new(
+            ItemKey::TrackArtists,
+            ItemValue::Text("   ".to_string()),
+        ));
+        tag.push(TagItem::new(
+            ItemKey::TrackArtists,
+            ItemValue::Text("Second Item".to_string()),
+        ));
+
+        assert_eq!(
+            metadata_artist_or_track_artists(&tag),
+            Some("Second Item".to_string())
         );
     }
 }
