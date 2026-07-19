@@ -53,7 +53,7 @@
 
     <div class="flex-1 flex justify-end items-center gap-1">
       <button
-        v-if="isBuildingQueue"
+        v-if="downloadButtonState === 'preparing'"
         class="button button-disabled px-4 py-1.5 h-full min-w-[12rem] text-xs rounded-full"
         disabled
         @click.prevent="$emit('showDownloadViewer')"
@@ -67,7 +67,7 @@
       </button>
 
       <button
-        v-else-if="isDownloading && downloadedCount !== totalCount"
+        v-else-if="downloadButtonState === 'downloading'"
         class="button button-working h-full min-w-[12rem] px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
@@ -81,7 +81,7 @@
       </button>
 
       <button
-        v-else-if="isDownloading"
+        v-else-if="downloadButtonState === 'downloaded'"
         class="button button-done h-full min-w-[12rem] px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
@@ -140,7 +140,7 @@
       </button>
 
       <button
-        v-if="isExporting && (exportedCount + skippedCount + errorCount) < exportTotalCount"
+        v-if="isExporting && exportedCount + skippedCount + errorCount < exportTotalCount"
         class="button button-working h-full min-w-[7rem] px-2 text-xs rounded-full"
         @click.prevent="$emit('showExportViewer')"
       >
@@ -262,7 +262,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import DownloadMultiple from '~icons/mdi/download-multiple'
 import Loading from '~icons/mdi/loading'
 import Check from '~icons/mdi/check'
@@ -280,6 +280,12 @@ import { useTranslator } from '@/composables/translator.js'
 import MiniSearch from './MiniSearch.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from 'vue-toastification'
+import {
+  clearDisabledEmbedSelection,
+  getDownloadButtonState,
+  loadExportFormatPrefs,
+  saveExportFormatPrefs,
+} from '@/utils/library-header-state.js'
 
 const props = defineProps(['activeTab'])
 const emit = defineEmits([
@@ -293,18 +299,31 @@ const emit = defineEmits([
   'showExportViewer',
 ])
 
-const exportPlainText = ref(false)
-const exportSyncedLrc = ref(false)
-const embedIntoTrack = ref(false)
+const savedExportPrefs = loadExportFormatPrefs(globalThis.window?.localStorage)
+const exportPlainText = ref(savedExportPrefs.plainText)
+const exportSyncedLrc = ref(savedExportPrefs.syncedLrc)
+const embedIntoTrack = ref(savedExportPrefs.embedIntoTrack)
 const tryEmbedLyrics = ref(false)
 const toast = useToast()
 
 const refreshEmbedConfig = async () => {
   const config = await invoke('get_config')
   tryEmbedLyrics.value = config.try_embed_lyrics
+
+  if (!tryEmbedLyrics.value && embedIntoTrack.value) {
+    embedIntoTrack.value = false
+  }
 }
 
 onMounted(refreshEmbedConfig)
+
+watch([exportPlainText, exportSyncedLrc, embedIntoTrack], ([plainText, syncedLrc, embed]) => {
+  const prefs = clearDisabledEmbedSelection(
+    { plainText, syncedLrc, embedIntoTrack: embed },
+    tryEmbedLyrics.value
+  )
+  saveExportFormatPrefs(globalThis.window?.localStorage, prefs)
+})
 
 const hasSelectedExportFormat = computed(
   () => exportPlainText.value || exportSyncedLrc.value || embedIntoTrack.value
@@ -322,9 +341,30 @@ const handleExportClick = () => {
   })
 }
 
-const { isDownloading, totalCount: downloadTotalCount, downloadedCount, addToQueue } = useDownloader()
+const {
+  isDownloading,
+  totalCount: downloadTotalCount,
+  downloadedCount,
+  addToQueue,
+} = useDownloader()
+const isBuildingQueue = ref(false)
 
-const { isExporting, exportedCount, skippedCount, errorCount, totalCount: exportTotalCount } = useExporter()
+const downloadButtonState = computed(() =>
+  getDownloadButtonState({
+    isBuildingQueue: isBuildingQueue.value,
+    isDownloading: isDownloading.value,
+    downloadedCount: downloadedCount.value,
+    downloadTotalCount: downloadTotalCount.value,
+  })
+)
+
+const {
+  isExporting,
+  exportedCount,
+  skippedCount,
+  errorCount,
+  totalCount: exportTotalCount,
+} = useExporter()
 const {
   isTranslating,
   processedCount: processedTranslationCount,
@@ -335,7 +375,6 @@ const {
   startOver: startTranslationOver,
 } = useTranslator()
 
-const isBuildingQueue = ref(false)
 const formattedTranslationSpeed = computed(() => {
   const speed = translationSpeedPerSecond.value
   if (speed === null) {
@@ -401,7 +440,6 @@ const translateExistingLyrics = async () => {
     toast.error(`Failed to queue stored lyrics for translation: ${error}`)
   }
 }
-
 </script>
 
 <style scoped>
