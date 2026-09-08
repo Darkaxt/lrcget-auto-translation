@@ -679,21 +679,27 @@ async fn request_google_translation(
     request: &TranslationRequest,
 ) -> Result<String> {
     let api_key = require_config_value(&config.translation_google_api_key, "Google API key")?;
-    let response = translation_http_client()?
-        .post(format!(
-            "https://translation.googleapis.com/language/translate/v2?key={}",
-            api_key
-        ))
-        .json(&json!({
-            "q": source_texts(request),
-            "target": target_language_code(&request.target_language, false),
-            "format": "text"
-        }))
+    let response = google_translation_request(&translation_http_client()?, &api_key, request)
         .send()
         .await
         .map_err(|err| provider_transport_error("Google Translate", err))?;
     let raw = response_text_or_status_error(response, "Google Translate").await?;
     structured_json_from_google_response(&raw)
+}
+
+fn google_translation_request(
+    client: &reqwest::Client,
+    api_key: &str,
+    request: &TranslationRequest,
+) -> reqwest::RequestBuilder {
+    client
+        .post("https://translation.googleapis.com/language/translate/v2")
+        .header("x-goog-api-key", api_key)
+        .json(&json!({
+            "q": source_texts(request),
+            "target": target_language_code(&request.target_language, false),
+            "format": "text"
+        }))
 }
 
 async fn request_microsoft_translation(
@@ -1501,6 +1507,37 @@ mod tests {
         assert!(message.contains("Invalid request payload"));
         assert!(!message.contains("secret-token"));
         assert!(message.contains("key=REDACTED"));
+    }
+
+    #[test]
+    fn google_translation_request_keeps_api_key_out_of_url() {
+        let translation = TranslationRequest {
+            title: "Title".to_string(),
+            album_name: "Album".to_string(),
+            artist_name: "Artist".to_string(),
+            source_language: Some("Korean".to_string()),
+            target_language: "English".to_string(),
+            source_lrc: "[00:01.00]첫 줄".to_string(),
+        };
+        let request =
+            google_translation_request(&reqwest::Client::new(), "secret-token", &translation)
+                .build()
+                .unwrap();
+
+        assert_eq!(
+            request.url().as_str(),
+            "https://translation.googleapis.com/language/translate/v2"
+        );
+        assert_eq!(
+            request.headers().get("x-goog-api-key").unwrap(),
+            "secret-token"
+        );
+        assert!(!request
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .expect("Google Translate request should have a JSON body")
+            .windows("secret-token".len())
+            .any(|window| window == b"secret-token"));
     }
 
     #[test]
