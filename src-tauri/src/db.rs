@@ -277,6 +277,10 @@ pub fn get_config(db: &Connection) -> Result<PersistentConfig> {
         theme_mode,
         lrclib_instance,
         volume,
+        auto_export_enabled,
+        export_lrc,
+        export_txt,
+        export_embedded,
         translation_auto_enabled,
         translation_target_language,
         translation_provider,
@@ -295,6 +299,10 @@ pub fn get_config(db: &Connection) -> Result<PersistentConfig> {
     "})?;
     let row = statement.query_row([], |r| {
         Ok(PersistentConfig {
+            auto_export_enabled: r.get("auto_export_enabled")?,
+            export_lrc: r.get("export_lrc")?,
+            export_txt: r.get("export_txt")?,
+            export_embedded: r.get("export_embedded")?,
             skip_tracks_with_synced_lyrics: r.get("skip_tracks_with_synced_lyrics")?,
             skip_tracks_with_plain_lyrics: r.get("skip_tracks_with_plain_lyrics")?,
             show_line_count: r.get("show_line_count")?,
@@ -390,6 +398,48 @@ pub fn set_config(
         translation_openai_api_key,
         translation_openai_model,
     ])?;
+    Ok(())
+}
+
+// Omitted fields preserve preferences owned by the other settings surface.
+pub fn set_export_preferences(
+    auto_export_enabled: Option<bool>,
+    export_lrc: Option<bool>,
+    export_txt: Option<bool>,
+    export_embedded: Option<bool>,
+    skip_tracks_with_synced_lyrics: Option<bool>,
+    skip_tracks_with_plain_lyrics: Option<bool>,
+    db: &Connection,
+) -> Result<()> {
+    let config = get_config(db)?;
+    let export_embedded = export_embedded.filter(|_| config.try_embed_lyrics);
+    let has_sidecar =
+        export_lrc.unwrap_or(config.export_lrc) || export_txt.unwrap_or(config.export_txt);
+
+    if auto_export_enabled != Some(false)
+        && !has_sidecar
+        && !(export_embedded.unwrap_or(config.export_embedded) && config.try_embed_lyrics)
+    {
+        anyhow::bail!("Select at least one enabled export format");
+    }
+
+    db.execute(
+        "UPDATE config_data SET
+            auto_export_enabled = COALESCE(?1, auto_export_enabled),
+            export_lrc = COALESCE(?2, export_lrc),
+            export_txt = COALESCE(?3, export_txt),
+            export_embedded = COALESCE(?4, export_embedded),
+            skip_tracks_with_synced_lyrics = COALESCE(?5, skip_tracks_with_synced_lyrics),
+            skip_tracks_with_plain_lyrics = COALESCE(?6, skip_tracks_with_plain_lyrics)",
+        (
+            auto_export_enabled,
+            export_lrc,
+            export_txt,
+            export_embedded,
+            skip_tracks_with_synced_lyrics,
+            skip_tracks_with_plain_lyrics,
+        ),
+    )?;
     Ok(())
 }
 
@@ -2915,6 +2965,10 @@ mod translation_db_tests {
                 theme_mode TEXT DEFAULT 'auto',
                 lrclib_instance TEXT DEFAULT 'https://lrclib.net',
                 volume REAL DEFAULT 1.0,
+                auto_export_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                export_lrc BOOLEAN NOT NULL DEFAULT TRUE,
+                export_txt BOOLEAN NOT NULL DEFAULT FALSE,
+                export_embedded BOOLEAN NOT NULL DEFAULT FALSE,
                 translation_auto_enabled BOOLEAN DEFAULT 0,
                 translation_target_language TEXT DEFAULT 'English',
                 translation_provider TEXT DEFAULT 'gemini',
@@ -2940,5 +2994,78 @@ mod translation_db_tests {
         assert_eq!(config.translation_provider, "gemini");
         assert_eq!(config.translation_export_mode, "original");
         assert_eq!(config.translation_gemini_model, "gemini-flash-latest");
+    }
+}
+
+#[cfg(test)]
+mod export_preferences_tests {
+    use super::*;
+
+    fn setup() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        Migrations::from_directory(&MIGRATIONS_DIR)
+            .unwrap()
+            .to_latest(&mut conn)
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn preferences_preserve_omitted_fields_and_require_an_enabled_format() {
+        let conn = setup();
+        set_export_preferences(
+            Some(true),
+            Some(true),
+            Some(true),
+            None,
+            Some(true),
+            Some(false),
+            &conn,
+        )
+        .unwrap();
+
+        set_export_preferences(None, Some(false), None, None, None, None, &conn).unwrap();
+        let config = get_config(&conn).unwrap();
+        assert!(config.auto_export_enabled);
+        assert!(!config.export_lrc);
+        assert!(config.export_txt);
+        assert!(config.skip_tracks_with_synced_lyrics);
+        assert!(!config.skip_tracks_with_plain_lyrics);
+
+        assert!(set_export_preferences(
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            None,
+            None,
+            &conn,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn disabled_embedding_cannot_replace_the_remembered_choice() {
+        let conn = setup();
+        conn.execute(
+            "UPDATE config_data SET try_embed_lyrics = TRUE, export_embedded = TRUE",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE config_data SET try_embed_lyrics = FALSE", [])
+            .unwrap();
+
+        set_export_preferences(
+            Some(false),
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+            &conn,
+        )
+        .unwrap();
+
+        assert!(get_config(&conn).unwrap().export_embedded);
     }
 }

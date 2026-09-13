@@ -1,5 +1,8 @@
 <template>
-  <div class="px-4 py-2 h-12 flex justify-between gap-4 flex-none items-stretch">
+  <div
+    id="library-header"
+    class="px-4 py-2 h-12 flex justify-between gap-4 flex-none items-stretch"
+  >
     <div class="flex-1 ml-2">
       <MiniSearch :active-tab="props.activeTab" />
     </div>
@@ -53,7 +56,7 @@
 
     <div class="flex-1 flex justify-end items-center gap-1">
       <button
-        v-if="downloadButtonState === 'preparing'"
+        v-if="isBuildingQueue"
         class="button button-disabled px-4 py-1.5 h-full min-w-[12rem] text-xs rounded-full"
         disabled
         @click.prevent="$emit('showDownloadViewer')"
@@ -67,7 +70,7 @@
       </button>
 
       <button
-        v-else-if="downloadButtonState === 'downloading'"
+        v-else-if="isDownloading && downloadedCount !== downloadTotalCount"
         class="button button-working h-full min-w-[12rem] px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
@@ -81,7 +84,7 @@
       </button>
 
       <button
-        v-else-if="downloadButtonState === 'downloaded'"
+        v-else-if="isDownloading"
         class="button button-done h-full min-w-[12rem] px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
@@ -94,11 +97,9 @@
       <button
         v-else
         class="button button-primary h-full min-w-[12rem] px-2 text-xs rounded-full"
-        @click.prevent="downloadAllLyrics"
+        @click.stop.prevent="openDownloadOptions"
       >
-        <div class="text-sm">
-          <DownloadMultiple />
-        </div>
+        <DownloadMultiple />
         <span>Download all lyrics</span>
       </button>
 
@@ -107,13 +108,9 @@
         class="button button-working h-full min-w-[14rem] px-3 py-1.5 text-xs rounded-full"
         title="Translating stored lyrics"
       >
-        <div class="animate-spin text-sm">
-          <Loading />
-        </div>
+        <div class="animate-spin text-sm"><Loading /></div>
         <span class="whitespace-nowrap">
-          {{ activeTranslationCount }} active · {{ processedTranslationCount }}/{{
-            translationTotalCount
-          }}
+          {{ activeTranslationCount }} active · {{ processedTranslationCount }}/{{ translationTotalCount }}
           · {{ formattedTranslationSpeed }}
         </span>
       </button>
@@ -124,9 +121,7 @@
         title="Stored lyric translation complete"
         @click.prevent="startTranslationOver"
       >
-        <div class="text-sm">
-          <Check />
-        </div>
+        <Check />
         <span>{{ processedTranslationCount }}/{{ translationTotalCount }}</span>
       </button>
 
@@ -163,10 +158,11 @@
 
       <VDropdown
         v-else
+        ref="exportDropdown"
         theme="lrcget-dropdown"
         placement="bottom-end"
         class="h-full aspect-square"
-        @show="refreshEmbedConfig"
+        @show="openExportOptions"
       >
         <button
           class="button button-normal h-full min-w-[6rem] px-2 text-xs rounded-full"
@@ -176,48 +172,51 @@
           <span>Export</span>
         </button>
         <template #popper>
-          <div class="dropdown-container min-w-[17rem]">
+          <div
+            class="dropdown-container export-options min-w-[17rem]"
+            @keydown.esc="exportDropdown?.hide()"
+          >
             <div class="dropdown-section-label">Export all lyrics to tracks' directory:</div>
 
-            <label class="dropdown-item">
-              <CheckboxButton
-                id="export-plain-text"
-                v-model="exportPlainText"
-                name="export-plain-text"
-              >
-                <span class="dropdown-label">Plain lyrics (.txt)</span>
-              </CheckboxButton>
-            </label>
-            <label class="dropdown-item">
-              <CheckboxButton
-                id="export-synced-lrc"
-                v-model="exportSyncedLrc"
-                name="export-synced-lrc"
-              >
-                <span class="dropdown-label">Timestamped lyrics (.lrc)</span>
-              </CheckboxButton>
-            </label>
+            <fieldset :disabled="exportLoading || submittingExport">
+              <label class="dropdown-item">
+                <CheckboxButton
+                  id="export-plain-text"
+                  v-model="exportDraft.plainText"
+                  name="export-plain-text"
+                >
+                  <span class="dropdown-label">Plain lyrics (.txt)</span>
+                </CheckboxButton>
+              </label>
+              <label class="dropdown-item">
+                <CheckboxButton
+                  id="export-synced-lrc"
+                  v-model="exportDraft.syncedLrc"
+                  name="export-synced-lrc"
+                >
+                  <span class="dropdown-label">Synced lyrics (.lrc)</span>
+                </CheckboxButton>
+              </label>
 
-            <label
-              class="dropdown-item"
-              :class="{ 'opacity-50 cursor-not-allowed': !tryEmbedLyrics }"
-            >
-              <CheckboxButton
-                id="embed-into-track"
-                v-model="embedIntoTrack"
-                name="embed-into-track"
-                :disabled="!tryEmbedLyrics"
-              >
-                <span class="dropdown-label">Embed lyrics into audio</span>
-              </CheckboxButton>
-            </label>
-
+              <label class="dropdown-item" :class="{ 'cursor-not-allowed': !tryEmbedLyrics }">
+                <CheckboxButton
+                  id="embed-into-track"
+                  v-model="exportDraft.embedIntoTrack"
+                  name="embed-into-track"
+                  :disabled="!tryEmbedLyrics"
+                >
+                  <span class="dropdown-label">Embed into track</span>
+                </CheckboxButton>
+              </label>
+            </fieldset>
+            <p v-if="exportError" role="alert" class="options-error">
+              {{ exportError }}
+            </p>
             <div class="px-2 py-2">
               <button
-                v-close-popper
                 class="button w-full text-sm h-8 rounded"
-                :class="hasSelectedExportFormat ? 'button-primary' : 'button-disabled'"
-                :disabled="!hasSelectedExportFormat"
+                :class="canExport ? 'button-primary' : 'button-disabled'"
+                :disabled="!canExport"
                 type="button"
                 @click="handleExportClick"
               >
@@ -262,7 +261,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import DownloadMultiple from '~icons/mdi/download-multiple'
 import Loading from '~icons/mdi/loading'
 import Check from '~icons/mdi/check'
@@ -277,15 +276,11 @@ import CheckboxButton from '@/components/common/CheckboxButton.vue'
 import { useDownloader } from '@/composables/downloader.js'
 import { useExporter } from '@/composables/export.js'
 import { useTranslator } from '@/composables/translator.js'
+import { useExportPreferences } from '@/composables/export-preferences.js'
 import MiniSearch from './MiniSearch.vue'
+import { useDownloadOptions, useDownloadTrigger } from '@/composables/download-options.js'
 import { invoke } from '@tauri-apps/api/core'
 import { useToast } from 'vue-toastification'
-import {
-  clearDisabledEmbedSelection,
-  getDownloadButtonState,
-  loadExportFormatPrefs,
-  saveExportFormatPrefs,
-} from '@/utils/library-header-state.js'
 
 const props = defineProps(['activeTab'])
 const emit = defineEmits([
@@ -299,64 +294,67 @@ const emit = defineEmits([
   'showExportViewer',
 ])
 
-const savedExportPrefs = loadExportFormatPrefs(globalThis.window?.localStorage)
-const exportPlainText = ref(savedExportPrefs.plainText)
-const exportSyncedLrc = ref(savedExportPrefs.syncedLrc)
-const embedIntoTrack = ref(savedExportPrefs.embedIntoTrack)
+const { refresh: refreshPreferences, save: savePreferences } = useExportPreferences()
+const exportDropdown = ref(null)
+const exportDraft = ref({ plainText: false, syncedLrc: true, embedIntoTrack: false })
 const tryEmbedLyrics = ref(false)
+const exportLoading = ref(false)
+const submittingExport = ref(false)
+const exportError = ref('')
 const toast = useToast()
 
-const refreshEmbedConfig = async () => {
-  const config = await invoke('get_config')
-  tryEmbedLyrics.value = config.try_embed_lyrics
+const { isBuildingQueue } = useDownloadOptions()
+const openDownloadOptions = useDownloadTrigger(() => ({ type: 'library' }))
 
-  if (!tryEmbedLyrics.value && embedIntoTrack.value) {
-    embedIntoTrack.value = false
+const openExportOptions = async () => {
+  exportLoading.value = true
+  exportError.value = ''
+  try {
+    const config = await refreshPreferences()
+    exportDraft.value = {
+      plainText: config.export_txt,
+      syncedLrc: config.export_lrc,
+      embedIntoTrack: config.export_embedded,
+    }
+    tryEmbedLyrics.value = config.try_embed_lyrics
+  } catch (error) {
+    exportError.value = String(error)
+  } finally {
+    exportLoading.value = false
   }
 }
 
-onMounted(refreshEmbedConfig)
-
-watch([exportPlainText, exportSyncedLrc, embedIntoTrack], ([plainText, syncedLrc, embed]) => {
-  const prefs = clearDisabledEmbedSelection(
-    { plainText, syncedLrc, embedIntoTrack: embed },
-    tryEmbedLyrics.value
-  )
-  saveExportFormatPrefs(globalThis.window?.localStorage, prefs)
-})
-
-const hasSelectedExportFormat = computed(
-  () => exportPlainText.value || exportSyncedLrc.value || embedIntoTrack.value
+const canExport = computed(
+  () =>
+    !exportLoading.value &&
+    !submittingExport.value &&
+    !exportError.value &&
+    (exportDraft.value.plainText ||
+      exportDraft.value.syncedLrc ||
+      (exportDraft.value.embedIntoTrack && tryEmbedLyrics.value))
 )
 
-const handleExportClick = () => {
-  if (!hasSelectedExportFormat.value) {
-    return
+const handleExportClick = async () => {
+  if (!canExport.value) return
+  submittingExport.value = true
+  const draft = { ...exportDraft.value }
+  const embedEnabled = tryEmbedLyrics.value
+  try {
+    await savePreferences({
+      exportTxt: draft.plainText,
+      exportLrc: draft.syncedLrc,
+      ...(embedEnabled ? { exportEmbedded: draft.embedIntoTrack } : {}),
+    })
+    exportDropdown.value?.hide()
+    emit('exportAllLyrics', { ...draft, embedIntoTrack: draft.embedIntoTrack && embedEnabled })
+  } catch (error) {
+    exportError.value = String(error)
+  } finally {
+    submittingExport.value = false
   }
-
-  emit('exportAllLyrics', {
-    plainText: exportPlainText.value,
-    syncedLrc: exportSyncedLrc.value,
-    embedIntoTrack: embedIntoTrack.value,
-  })
 }
 
-const {
-  isDownloading,
-  totalCount: downloadTotalCount,
-  downloadedCount,
-  addToQueue,
-} = useDownloader()
-const isBuildingQueue = ref(false)
-
-const downloadButtonState = computed(() =>
-  getDownloadButtonState({
-    isBuildingQueue: isBuildingQueue.value,
-    isDownloading: isDownloading.value,
-    downloadedCount: downloadedCount.value,
-    downloadTotalCount: downloadTotalCount.value,
-  })
-)
+const { isDownloading, totalCount: downloadTotalCount, downloadedCount } = useDownloader()
 
 const {
   isExporting,
@@ -365,6 +363,7 @@ const {
   errorCount,
   totalCount: exportTotalCount,
 } = useExporter()
+
 const {
   isTranslating,
   processedCount: processedTranslationCount,
@@ -377,67 +376,32 @@ const {
 
 const formattedTranslationSpeed = computed(() => {
   const speed = translationSpeedPerSecond.value
-  if (speed === null) {
-    return '--/s'
-  }
-
-  if (speed > 0 && speed < 0.1) {
-    return '<0.1/s'
-  }
-
-  return `${speed.toFixed(1)}/s`
+  if (speed === null) return '--/s'
+  if (speed > 0 && speed < 0.1) return '<0.1/s'
+  return speed.toFixed(1) + '/s'
 })
-
-const downloadAllLyrics = async () => {
-  isBuildingQueue.value = true
-
-  try {
-    const config = await invoke('get_config')
-    let downloadTrackIds = await invoke('get_track_ids', {
-      searchQuery: '',
-      syncedLyricsTracks: !config.skip_tracks_with_synced_lyrics,
-      plainLyricsTracks: !config.skip_tracks_with_plain_lyrics,
-      instrumentalTracks:
-        !config.skip_tracks_with_synced_lyrics && !config.skip_tracks_with_plain_lyrics, // Treat instrumental tracks as either synced or plain lyrics tracks
-      noLyricsTracks: true,
-    })
-    addToQueue(downloadTrackIds)
-  } catch (error) {
-    // TODO handle error by showing an error popup, etc...
-    console.error(error)
-  } finally {
-    isBuildingQueue.value = false
-  }
-}
 
 const translateExistingLyrics = async () => {
   try {
     const prepared = await invoke('prepare_existing_lyrics_translation_queue')
-
     if (prepared.queuedCount === 0 && prepared.skippedSameLanguageCount === 0) {
       toast.info('No stored synced lyrics need translation')
       return
     }
-
-    if (prepared.queuedCount > 0) {
-      addToTranslationQueue(prepared.queuedTrackIds)
-    }
+    if (prepared.queuedCount > 0) addToTranslationQueue(prepared.queuedTrackIds)
 
     const summary = []
-    if (prepared.queuedCount > 0) {
-      summary.push(`queued ${prepared.queuedCount}`)
-    }
+    if (prepared.queuedCount > 0) summary.push('queued ' + prepared.queuedCount)
     if (prepared.skippedSameLanguageCount > 0) {
-      summary.push(`${prepared.skippedSameLanguageCount} already in target language`)
+      summary.push(prepared.skippedSameLanguageCount + ' already in target language')
     }
     if (prepared.alreadyCurrentCount > 0) {
-      summary.push(`${prepared.alreadyCurrentCount} already current`)
+      summary.push(prepared.alreadyCurrentCount + ' already current')
     }
-
-    toast.info(`Prepared stored lyric translation: ${summary.join(', ')}`)
+    toast.info('Prepared stored lyric translation: ' + summary.join(', '))
   } catch (error) {
     console.error(error)
-    toast.error(`Failed to queue stored lyrics for translation: ${error}`)
+    toast.error('Failed to queue stored lyrics for translation: ' + error)
   }
 }
 </script>
@@ -457,6 +421,22 @@ const translateExistingLyrics = async () => {
 
 .dropdown-container {
   @apply p-1 min-w-[10rem];
+}
+
+.export-options {
+  @apply max-w-[calc(100vw-1rem)] max-h-[calc(100vh-4rem)] overflow-y-auto text-neutral-900 dark:text-neutral-100;
+}
+
+.options-error {
+  @apply px-2 py-1 text-xs leading-relaxed break-words text-red-700 dark:text-red-400;
+}
+
+.export-options .button-primary {
+  @apply bg-hoa-1400 hover:bg-hoa-1500 active:bg-hoa-1500;
+}
+
+.export-options .button-disabled {
+  @apply text-neutral-500 dark:text-neutral-400;
 }
 
 .dropdown-item {

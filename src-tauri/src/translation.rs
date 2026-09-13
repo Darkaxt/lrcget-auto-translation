@@ -1220,6 +1220,10 @@ mod tests {
     #[test]
     fn target_language_defaults_to_english_when_config_is_blank() {
         let config = PersistentConfig {
+            auto_export_enabled: false,
+            export_lrc: true,
+            export_txt: false,
+            export_embedded: false,
             skip_tracks_with_synced_lyrics: false,
             skip_tracks_with_plain_lyrics: false,
             show_line_count: true,

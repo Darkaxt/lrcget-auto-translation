@@ -1,6 +1,6 @@
 [package]
 name = "lrcget"
-version = "2.1.0"
+version = "2.2.0"
 description = "Utility for mass-downloading LRC synced lyrics for your offline music library."
 authors = ["tranxuanthang"]
 license = "MIT"
@@ -44,7 +44,6 @@ tauri-plugin-os = "2.3.2"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-clipboard-manager = "2.3.2"
-
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL

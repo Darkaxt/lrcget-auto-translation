@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { expect, test } from 'vitest'
 import { ref } from 'vue'
 
 import { useEditLyricsV2Playback } from './useEditLyricsV2Playback.js'
@@ -40,7 +39,7 @@ test('playLine plays only the selected line duration', async () => {
   await playLine(0)
   await wait(60)
 
-  assert.deepEqual(calls, [
+  expect(calls).toEqual([
     ['playTrack', 1],
     ['seek', 0.01],
     ['pause'],
@@ -83,7 +82,7 @@ test('editor seek cancels pending line preview pause', async () => {
   await seekEditorPlayback(0.2)
   await wait(80)
 
-  assert.deepEqual(calls, [
+  expect(calls).toEqual([
     ['playTrack', 1],
     ['seek', 0.01],
     ['seek', 0.2],
