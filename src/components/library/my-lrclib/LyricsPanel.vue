@@ -1,9 +1,9 @@
 <template>
   <div
-    class="relative grow rounded bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 h-full overflow-hidden"
+    class="relative grow rounded-sm bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 h-full overflow-hidden"
   >
     <button
-      class="absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800"
+      class="absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded-sm text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-800"
       :aria-label="copied ? 'Copied' : 'Copy'"
       @click.stop="onCopy"
     >

@@ -56,7 +56,7 @@
             </div>
 
             <button
-              class="z-10 absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 shadow"
+              class="z-10 absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded-sm text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 shadow-sm"
               type="button"
               :aria-label="copied ? 'Copied' : 'Copy'"
               @click.stop="onCopy"
@@ -66,10 +66,10 @@
             </button>
 
             <div
-              class="absolute top-0 left-0 w-full h-10 bg-gradient-to-b from-neutral-50 dark:from-neutral-900 pointer-events-none"
+              class="absolute top-0 left-0 w-full h-10 bg-linear-to-b from-neutral-50 dark:from-neutral-900 pointer-events-none"
             />
             <div
-              class="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-neutral-50 dark:from-neutral-900 pointer-events-none"
+              class="absolute bottom-0 left-0 w-full h-10 bg-linear-to-t from-neutral-50 dark:from-neutral-900 pointer-events-none"
             />
           </div>
         </div>

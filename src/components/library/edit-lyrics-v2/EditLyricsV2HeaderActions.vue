@@ -34,7 +34,7 @@
             <div class="px-2 py-2">
               <button
                 v-close-popper
-                class="button button-primary w-full text-sm h-8 rounded"
+                class="button button-primary w-full text-sm h-8 rounded-sm"
                 @click="emit('save-and-publish')"
               >
                 Save and Publish
@@ -80,7 +80,7 @@
             <div class="px-2 py-2">
               <button
                 v-close-popper
-                class="button w-full text-sm h-8 rounded"
+                class="button w-full text-sm h-8 rounded-sm"
                 :class="
                   hasSelectedExportFormat && !isExporting ? 'button-primary' : 'button-disabled'
                 "
@@ -162,12 +162,13 @@ defineProps({
 </script>
 
 <style scoped>
+@reference '../../../style.css';
 .dropdown-container {
   @apply p-1 min-w-[17rem];
 }
 
 .dropdown-item {
-  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded cursor-pointer h-8 gap-2 w-full;
+  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded-sm cursor-pointer h-8 gap-2 w-full;
 }
 
 .dropdown-divider {

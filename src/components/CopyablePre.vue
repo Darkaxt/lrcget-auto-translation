@@ -6,7 +6,7 @@
     ><slot /></pre>
     <div class="absolute top-0 right-0 h-full flex items-center px-1">
       <button
-        class="p-2 rounded bg-white dark:bg-black text-indigo-800 dark:text-indigo-400"
+        class="p-2 rounded-sm bg-white dark:bg-black text-indigo-800 dark:text-indigo-400"
         @click="copyToClipboard"
       >
         <ContentCopy />

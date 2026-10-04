@@ -1,6 +1,6 @@
 <template>
   <BaseModal
-    content-class="w-full h-[80vh] max-w-screen-sm"
+    content-class="w-full h-[80vh] max-w-(--breakpoint-sm)"
     :title="`${props.track.name} - ${props.track.artistName}`"
     body-class="flex flex-col h-full min-h-0"
     @close="emit('close')"
@@ -42,14 +42,14 @@
 
     <div
       v-else-if="resolvedLyrics.instrumental"
-      class="grow rounded bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 whitespace-pre-line p-4 overflow-scroll italic flex items-center justify-center"
+      class="grow rounded-sm bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 whitespace-pre-line p-4 overflow-scroll italic flex items-center justify-center"
     >
       This track is instrumental
     </div>
 
     <div
       v-else
-      class="grow rounded bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 whitespace-pre-line p-4 overflow-scroll italic flex items-center justify-center"
+      class="grow rounded-sm bg-white text-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 whitespace-pre-line p-4 overflow-scroll italic flex items-center justify-center"
     >
       There is currently no lyrics submitted for this track
     </div>

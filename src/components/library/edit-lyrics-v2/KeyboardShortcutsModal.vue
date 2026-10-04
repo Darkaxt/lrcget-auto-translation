@@ -14,7 +14,7 @@
         </span>
         <div class="flex items-center gap-2">
           <button
-            class="button button-normal p-1.5 rounded h-7 w-7 inline-flex items-center justify-center"
+            class="button button-normal p-1.5 rounded-sm h-7 w-7 inline-flex items-center justify-center"
             :title="isConfigMode ? 'Done configuring shortcuts' : 'Configure shortcuts'"
             :aria-label="isConfigMode ? 'Done configuring shortcuts' : 'Configure shortcuts'"
             @click="isConfigMode = !isConfigMode"
@@ -24,7 +24,7 @@
           </button>
           <button
             v-if="isConfigMode"
-            class="button button-normal p-1.5 rounded h-7 w-7 inline-flex items-center justify-center"
+            class="button button-normal p-1.5 rounded-sm h-7 w-7 inline-flex items-center justify-center"
             :class="resetAllButtonClass"
             title="Reset all shortcuts"
             aria-label="Reset all shortcuts"
@@ -84,7 +84,7 @@
                 <span
                   v-for="(key, keyIndex) in shortcut.keys"
                   :key="keyIndex"
-                  class="inline-flex items-center justify-center px-1.5 py-0.5 rounded border text-neutral-700 dark:text-neutral-300 font-mono text-xs leading-none min-w-[1.5rem]"
+                  class="inline-flex items-center justify-center px-1.5 py-0.5 rounded-sm border text-neutral-700 dark:text-neutral-300 font-mono text-xs leading-none min-w-6"
                   :class="
                     isConfigMode && shortcut.id && hasDuplicateShortcut(shortcut.id)
                       ? 'bg-amber-100 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200'
@@ -100,7 +100,7 @@
               <template v-if="isConfigMode">
                 <template v-if="shortcut.id">
                   <button
-                    class="button button-normal p-1 rounded h-6 w-6 inline-flex items-center justify-center"
+                    class="button button-normal p-1 rounded-sm h-6 w-6 inline-flex items-center justify-center"
                     :class="changeButtonClass(shortcut.id)"
                     :title="
                       captureShortcutId === shortcut.id
@@ -118,7 +118,7 @@
                     <Keyboard v-else class="w-4 h-4" />
                   </button>
                   <button
-                    class="button button-normal p-1 rounded h-6 w-6 inline-flex items-center justify-center"
+                    class="button button-normal p-1 rounded-sm h-6 w-6 inline-flex items-center justify-center"
                     :class="resetButtonClass(shortcut.id, shortcut)"
                     :title="`Reset shortcut for ${shortcut.description}`"
                     :aria-label="`Reset shortcut for ${shortcut.description}`"
@@ -308,15 +308,15 @@ const changeButtonClass = shortcutId => {
   const state = shortcutButtonStates.value[shortcutId]?.change || 'idle'
 
   if (state === 'listening') {
-    return '!bg-hoa-600 !text-white hover:!bg-hoa-700 dark:!bg-hoa-500 hover:dark:!bg-hoa-400 ring-2 ring-hoa-300/80 dark:ring-hoa-500/70'
+    return 'bg-hoa-600! text-white! hover:bg-hoa-700! dark:bg-hoa-500! hover:dark:bg-hoa-400! ring-2 ring-hoa-300/80 dark:ring-hoa-500/70'
   }
 
   if (state === 'success') {
-    return '!bg-emerald-200 !text-emerald-900 hover:!bg-emerald-300 dark:!bg-emerald-800 dark:!text-emerald-100 hover:dark:!bg-emerald-700'
+    return 'bg-emerald-200! text-emerald-900! hover:bg-emerald-300! dark:bg-emerald-800! dark:text-emerald-100! hover:dark:bg-emerald-700!'
   }
 
   if (state === 'warning') {
-    return '!bg-amber-200 !text-amber-900 hover:!bg-amber-300 dark:!bg-amber-800 dark:!text-amber-100 hover:dark:!bg-amber-700'
+    return 'bg-amber-200! text-amber-900! hover:bg-amber-300! dark:bg-amber-800! dark:text-amber-100! hover:dark:bg-amber-700!'
   }
 
   return ''
@@ -330,11 +330,11 @@ const resetButtonClass = (shortcutId, shortcut) => {
   const state = shortcutButtonStates.value[shortcutId]?.reset || 'idle'
 
   if (state === 'success') {
-    return '!bg-emerald-200 !text-emerald-900 hover:!bg-emerald-300 dark:!bg-emerald-800 dark:!text-emerald-100 hover:dark:!bg-emerald-700'
+    return 'bg-emerald-200! text-emerald-900! hover:bg-emerald-300! dark:bg-emerald-800! dark:text-emerald-100! hover:dark:bg-emerald-700!'
   }
 
   if (isShortcutModified(shortcut)) {
-    return '!bg-hoa-100 !text-hoa-900 hover:!bg-hoa-200 dark:!bg-hoa-1200/40 dark:!text-hoa-200 hover:dark:!bg-hoa-1100/50'
+    return 'bg-hoa-100! text-hoa-900! hover:bg-hoa-200! dark:bg-hoa-1200/40! dark:text-hoa-200! hover:dark:bg-hoa-1100/50!'
   }
 
   return ''
@@ -342,7 +342,7 @@ const resetButtonClass = (shortcutId, shortcut) => {
 
 const resetAllButtonClass = computed(() => {
   if (resetAllButtonState.value === 'success') {
-    return '!bg-emerald-200 !text-emerald-900 hover:!bg-emerald-300 dark:!bg-emerald-800 dark:!text-emerald-100 hover:dark:!bg-emerald-700'
+    return 'bg-emerald-200! text-emerald-900! hover:bg-emerald-300! dark:bg-emerald-800! dark:text-emerald-100! hover:dark:bg-emerald-700!'
   }
 
   return ''

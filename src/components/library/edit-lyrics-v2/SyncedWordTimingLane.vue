@@ -1,6 +1,6 @@
 <template>
   <div
-    class="relative z-20 flex flex-col px-2 py-2 rounded-lg overflow-visible h-[5rem] transition-[min-height] duration-200 ease-out"
+    class="relative z-20 flex flex-col px-2 py-2 rounded-lg overflow-visible h-20 transition-[min-height] duration-200 ease-out"
     :class="hasSelectedLine ? 'bg-neutral-100 dark:bg-neutral-800' : 'bg-white dark:bg-neutral-950'"
   >
     <!-- Empty state - no line selected -->
@@ -34,7 +34,7 @@
       <!-- Header with line info -->
       <div class="flex items-center justify-between mb-2 shrink-0">
         <div class="flex items-center gap-3 text-xs text-neutral-600 dark:text-neutral-400">
-          <span class="font-mono bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 px-2 py-0.5 rounded">
+          <span class="font-mono bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200 px-2 py-0.5 rounded-sm">
             {{ formatTimestampMs(selectedLine.start_ms) }} -
             {{ formatTimestampMs(actualLineEndMs) }}
           </span>
@@ -43,7 +43,7 @@
 
         <div class="flex items-center gap-2">
           <button
-            class="button button-normal text-xs px-2 py-1 rounded flex items-center gap-1"
+            class="button button-normal text-xs px-2 py-1 rounded-sm flex items-center gap-1"
             :title="playLineTitle"
             @click="handlePlayLine"
           >
@@ -51,7 +51,7 @@
             <span>Play</span>
           </button>
           <button
-            class="button button-primary text-xs px-2 py-1 rounded flex items-center gap-1"
+            class="button button-primary text-xs px-2 py-1 rounded-sm flex items-center gap-1"
             :title="syncWordTitle"
             @click="handleSyncWord"
           >
@@ -59,7 +59,7 @@
             <span>Sync word</span>
           </button>
           <button
-            class="button button-normal text-xs px-2 py-1 rounded flex items-center gap-1"
+            class="button button-normal text-xs px-2 py-1 rounded-sm flex items-center gap-1"
             title="Reset word timings to default state"
             @click="handleResetWords"
           >
@@ -72,7 +72,7 @@
       <!-- Timeline with word segments -->
       <div
         ref="timelineElement"
-        class="relative flex-1 bg-white dark:bg-neutral-900 rounded border border-neutral-300 dark:border-neutral-600 transition-opacity duration-200"
+        class="relative flex-1 bg-white dark:bg-neutral-900 rounded-sm border border-neutral-300 dark:border-neutral-600 transition-opacity duration-200"
         :class="{ 'opacity-50': !hasActualWords }"
         @click="handleTimelineClick"
       >
@@ -133,7 +133,7 @@
             class="absolute top-0 bottom-0 w-[3px] -translate-x-1/2 bg-neutral-600 dark:bg-neutral-300 ring-1 ring-neutral-500/25"
           />
           <div
-            class="absolute top-[-0.375rem] left-0 -translate-x-1/2 -translate-y-full px-[0.4rem] py-0.5 rounded-full text-xs leading-4 whitespace-nowrap text-neutral-800 bg-neutral-200 dark:text-white dark:bg-hoa-1100"
+            class="absolute -top-1.5 left-0 -translate-x-1/2 -translate-y-full px-[0.4rem] py-0.5 rounded-full text-xs leading-4 whitespace-nowrap text-neutral-800 bg-neutral-200 dark:text-white dark:bg-hoa-1100"
           >
             {{ formatTimestampMs(dragState.currentStartMs) }}
           </div>
@@ -146,7 +146,7 @@
           :style="{ left: `${playheadPercent}%` }"
         >
           <div
-            class="absolute -top-1 -left-[3px] w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-l-transparent border-r-transparent border-t-neutral-400 dark:border-t-neutral-400"
+            class="absolute -top-1 left-[-3px] w-0 h-0 border-l-4 border-r-4 border-t-[6px] border-l-transparent border-r-transparent border-t-neutral-400 dark:border-t-neutral-400"
           />
         </div>
       </div>

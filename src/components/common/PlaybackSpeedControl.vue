@@ -144,13 +144,14 @@ const handleFocusOut = event => {
 </script>
 
 <style scoped>
+@reference '../../style.css';
 .speed-trigger {
-  @apply inline-flex h-7 min-w-[4.5rem] items-center justify-between gap-2 rounded-full border border-neutral-300 bg-white px-2.5 text-xs font-semibold tabular-nums text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700;
+  @apply inline-flex h-7 min-w-18 items-center justify-between gap-2 rounded-full border border-neutral-300 bg-white px-2.5 text-xs font-semibold tabular-nums text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700;
 }
 
 .speed-trigger:focus-visible,
 .speed-trigger-open {
-  @apply outline-none ring-2 ring-hoa-1100/60;
+  @apply outline-hidden ring-2 ring-hoa-1100/60;
 }
 
 .speed-menu {
@@ -158,7 +159,7 @@ const handleFocusOut = event => {
 }
 
 .speed-option {
-  @apply flex h-8 w-full items-center justify-between rounded px-2.5 text-xs font-medium tabular-nums text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700;
+  @apply flex h-8 w-full items-center justify-between rounded-sm px-2.5 text-xs font-medium tabular-nums text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700;
 }
 
 .speed-option-selected {
@@ -166,6 +167,6 @@ const handleFocusOut = event => {
 }
 
 .speed-option:focus-visible {
-  @apply outline-none ring-2 ring-inset ring-hoa-1100;
+  @apply outline-hidden ring-2 ring-inset ring-hoa-1100;
 }
 </style>

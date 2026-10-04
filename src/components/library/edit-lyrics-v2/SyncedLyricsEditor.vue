@@ -16,7 +16,7 @@
 
     <div
       ref="linesListElement"
-      class="flex-1 overflow-y-auto py-4 relative z-0 outline-none"
+      class="flex-1 overflow-y-auto py-4 relative z-0 outline-hidden"
       tabindex="0"
       @mousemove="handleMouseMove"
       @mouseleave="handleLinesMouseLeave"

@@ -10,7 +10,7 @@
           v-if="shouldLoadCodeMirror"
           v-model="lyricsProxy"
           placeholder="Plain lyrics is currently empty"
-          class="codemirror-custom h-full outline-none"
+          class="codemirror-custom h-full outline-hidden"
           :autofocus="true"
           :indent-with-tab="true"
           :tab-size="2"

@@ -57,7 +57,7 @@
     <div class="flex-1 flex justify-end items-center gap-1">
       <button
         v-if="isBuildingQueue"
-        class="button button-disabled px-4 py-1.5 h-full min-w-[12rem] text-xs rounded-full"
+        class="button button-disabled px-4 py-1.5 h-full min-w-48 text-xs rounded-full"
         disabled
         @click.prevent="$emit('showDownloadViewer')"
       >
@@ -71,7 +71,7 @@
 
       <button
         v-else-if="isDownloading && downloadedCount !== downloadTotalCount"
-        class="button button-working h-full min-w-[12rem] px-2 text-xs rounded-full"
+        class="button button-working h-full min-w-48 px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
         <div class="animate-spin text-sm">
@@ -85,7 +85,7 @@
 
       <button
         v-else-if="isDownloading"
-        class="button button-done h-full min-w-[12rem] px-2 text-xs rounded-full"
+        class="button button-done h-full min-w-48 px-2 text-xs rounded-full"
         @click.prevent="$emit('showDownloadViewer')"
       >
         <div class="text-sm">
@@ -96,7 +96,7 @@
 
       <button
         v-else
-        class="button button-primary h-full min-w-[12rem] px-2 text-xs rounded-full"
+        class="button button-primary h-full min-w-48 px-2 text-xs rounded-full"
         @click.stop.prevent="openDownloadOptions"
       >
         <DownloadMultiple />
@@ -105,7 +105,7 @@
 
       <button
         v-if="isTranslating && processedTranslationCount < translationTotalCount"
-        class="button button-working h-full min-w-[14rem] px-3 py-1.5 text-xs rounded-full"
+        class="button button-working h-full min-w-56 px-3 py-1.5 text-xs rounded-full"
         title="Translating stored lyrics"
       >
         <div class="animate-spin text-sm"><Loading /></div>
@@ -117,7 +117,7 @@
 
       <button
         v-else-if="isTranslating"
-        class="button button-done h-full min-w-[9rem] px-3 py-1.5 text-xs rounded-full"
+        class="button button-done h-full min-w-36 px-3 py-1.5 text-xs rounded-full"
         title="Stored lyric translation complete"
         @click.prevent="startTranslationOver"
       >
@@ -136,7 +136,7 @@
 
       <button
         v-if="isExporting && exportedCount + skippedCount + errorCount < exportTotalCount"
-        class="button button-working h-full min-w-[7rem] px-2 text-xs rounded-full"
+        class="button button-working h-full min-w-28 px-2 text-xs rounded-full"
         @click.prevent="$emit('showExportViewer')"
       >
         <div class="animate-spin text-sm">
@@ -147,7 +147,7 @@
 
       <button
         v-else-if="isExporting"
-        class="button button-done h-full min-w-[7rem] px-2 text-xs rounded-full"
+        class="button button-done h-full min-w-28 px-2 text-xs rounded-full"
         @click.prevent="$emit('showExportViewer')"
       >
         <div class="text-sm">
@@ -165,7 +165,7 @@
         @show="openExportOptions"
       >
         <button
-          class="button button-normal h-full min-w-[6rem] px-2 text-xs rounded-full"
+          class="button button-normal h-full min-w-24 px-2 text-xs rounded-full"
           title="Export all lyrics"
         >
           <Export />
@@ -173,7 +173,7 @@
         </button>
         <template #popper>
           <div
-            class="dropdown-container export-options min-w-[17rem]"
+            class="dropdown-container export-options min-w-68"
             @keydown.esc="exportDropdown?.hide()"
           >
             <div class="dropdown-section-label">Export all lyrics to tracks' directory:</div>
@@ -214,7 +214,7 @@
             </p>
             <div class="px-2 py-2">
               <button
-                class="button w-full text-sm h-8 rounded"
+                class="button w-full text-sm h-8 rounded-sm"
                 :class="canExport ? 'button-primary' : 'button-disabled'"
                 :disabled="!canExport"
                 type="button"
@@ -407,6 +407,7 @@ const translateExistingLyrics = async () => {
 </script>
 
 <style scoped>
+@reference '../../style.css';
 .active-tab {
   @apply text-neutral-900 border-neutral-900 dark:text-white dark:border-neutral-300;
 }
@@ -416,7 +417,7 @@ const translateExistingLyrics = async () => {
 }
 
 .tab {
-  @apply transition font-extrabold border-b-2 outline-none py-1;
+  @apply transition font-extrabold border-b-2 outline-hidden py-1;
 }
 
 .dropdown-container {
@@ -428,7 +429,7 @@ const translateExistingLyrics = async () => {
 }
 
 .options-error {
-  @apply px-2 py-1 text-xs leading-relaxed break-words text-red-700 dark:text-red-400;
+  @apply px-2 py-1 text-xs leading-relaxed wrap-break-word text-red-700 dark:text-red-400;
 }
 
 .export-options .button-primary {
@@ -440,7 +441,7 @@ const translateExistingLyrics = async () => {
 }
 
 .dropdown-item {
-  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded cursor-pointer h-8 gap-1 w-full;
+  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded-sm cursor-pointer h-8 gap-1 w-full;
 }
 
 .dropdown-label {

@@ -12,7 +12,7 @@
       <Loading class="animate-spin" />
     </div>
 
-    <div v-else class="mx-auto max-w-screen-sm">
+    <div v-else class="mx-auto max-w-(--breakpoint-sm)">
       <div class="flex flex-col mb-8">
         <div class="text-thin text-xl">
           Searching for <span class="font-bold">{{ keyword }}</span>
@@ -30,7 +30,7 @@
         <div
           v-for="result in normalizedTracks"
           :key="result.track.id"
-          class="rounded bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 transition px-2 py-1 flex gap-2 justify-between items-center"
+          class="rounded-sm bg-white hover:bg-neutral-50 dark:bg-neutral-900 dark:hover:bg-neutral-800 transition px-2 py-1 flex gap-2 justify-between items-center"
         >
           <div class="flex flex-col gap-1">
             <div class="flex gap-2 items-center">
@@ -38,34 +38,34 @@
                 {{ result.track.name }}
               </div>
               <div class="text-[0.65rem] font-bold flex gap-1">
-                <span class="bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 px-1 py-0.5 rounded">{{
+                <span class="bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-200 px-1 py-0.5 rounded-sm">{{
                   humanDuration(result.track.duration)
                 }}</span>
                 <template v-if="showLineCount === true">
                   <span
                     v-if="!!result.lyrics.syncedLyrics"
-                    class="bg-blue-800 text-blue-200 px-1 py-0.5 rounded"
+                    class="bg-blue-800 text-blue-200 px-1 py-0.5 rounded-sm"
                     >{{ countLines(result.lyrics.syncedLyrics) }} Lines</span
                   >
                   <span
                     v-else-if="!!result.lyrics.plainLyrics"
-                    class="bg-blue-800 text-blue-200 px-1 py-0.5 rounded"
+                    class="bg-blue-800 text-blue-200 px-1 py-0.5 rounded-sm"
                     >{{ countLines(result.lyrics.plainLyrics) }} Lines</span
                   >
                 </template>
                 <span
                   v-if="!!result.lyrics.syncedLyrics"
-                  class="bg-green-800 text-green-200 px-1 py-0.5 rounded"
+                  class="bg-green-800 text-green-200 px-1 py-0.5 rounded-sm"
                   >Synced</span
                 >
                 <span
                   v-else-if="!!result.lyrics.plainLyrics"
-                  class="bg-gray-800 text-gray-200 px-1 py-0.5 rounded"
+                  class="bg-gray-800 text-gray-200 px-1 py-0.5 rounded-sm"
                   >Plain</span
                 >
                 <span
                   v-else-if="!!result.lyrics.instrumental"
-                  class="bg-gray-300 text-gray-600 dark:bg-neutral-700 dark:text-neutral-300 px-1 py-0.5 rounded"
+                  class="bg-gray-300 text-gray-600 dark:bg-neutral-700 dark:text-neutral-300 px-1 py-0.5 rounded-sm"
                   >Instrumental</span
                 >
               </div>

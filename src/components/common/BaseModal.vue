@@ -51,7 +51,7 @@ const props = defineProps({
   },
   contentClass: {
     type: String,
-    default: 'w-full h-[80vh] max-w-screen-sm',
+    default: 'w-full h-[80vh] max-w-(--breakpoint-sm)',
   },
   bodyClass: {
     type: String,

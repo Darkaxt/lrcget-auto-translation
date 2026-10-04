@@ -189,6 +189,8 @@ Playback speed:
 
 ### Export Module (`export.rs`)
 
+LRC sidecar exports prepend nonempty track title (`ti`), artist (`ar`), and album (`al`) ID tags. Metadata newlines become spaces. The shared LRC writer adds these headers after the original, translated, or dual lyric body is selected, preserving timestamps and canonical lyrics. Plain text and embedded exports do not receive these headers.
+
 Manual lyrics export to sidecar files (`.txt`, `.lrc`) and embedded metadata.
 
 ```rust

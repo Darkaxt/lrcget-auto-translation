@@ -3,13 +3,13 @@
     title="YAML Debug"
     :esc-to-close="true"
     :click-to-close="true"
-    content-class="w-full h-[90vh] max-w-screen-lg"
+    content-class="w-full h-[90vh] max-w-(--breakpoint-lg)"
     body-class="h-full p-0"
     @close="emit('close')"
   >
     <div class="h-full flex flex-col relative">
       <div class="grow h-full overflow-auto bg-black text-green-400 text-sm p-4 select-text">
-        <pre class="font-mono whitespace-pre-wrap break-words overflow-x-auto select-text">{{
+        <pre class="font-mono whitespace-pre-wrap wrap-break-word overflow-x-auto select-text">{{
           content
         }}</pre>
       </div>

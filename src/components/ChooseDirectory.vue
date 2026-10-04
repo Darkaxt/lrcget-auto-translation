@@ -4,7 +4,7 @@
       <div class="text-thin text-xl text-neutral-900 dark:text-neutral-200">Select directories</div>
     </div>
 
-    <div class="grow flex flex-col items-center justify-center gap-8 w-full max-w-screen-sm">
+    <div class="grow flex flex-col items-center justify-center gap-8 w-full max-w-(--breakpoint-sm)">
       <div class="flex flex-col gap-2 w-full justify-center items-center">
         <div
           v-for="(directory, index) in directories"
