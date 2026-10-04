@@ -88,6 +88,26 @@ pub fn generate_txt_content(parsed: &ParsedLyricsfile) -> Option<String> {
     parsed.plain_lyrics.clone().filter(|s| !s.trim().is_empty())
 }
 
+/// Build LRC ID tags from nonempty track metadata.
+fn build_lrc_header(track: &PersistentTrack) -> String {
+    let mut header = String::new();
+    for (tag, value) in [
+        ("ti", &track.title),
+        ("ar", &track.artist_name),
+        ("al", &track.album_name),
+    ] {
+        let value = value.replace(['\r', '\n'], " ");
+        let value = value.trim();
+        if !value.is_empty() {
+            header.push_str(&format!("[{tag}:{value}]\n"));
+        }
+    }
+    if !header.is_empty() {
+        header.push('\n');
+    }
+    header
+}
+
 /// Generate standard LRC format content from parsed lyricsfile
 pub fn generate_lrc_content(parsed: &ParsedLyricsfile) -> Option<String> {
     if parsed.is_instrumental {
@@ -172,6 +192,7 @@ fn export_lrc(
         let _ = remove_file(txt_path);
     }
 
+    let content = format!("{}{}", build_lrc_header(track), content);
     write(&lrc_path, content).map_err(|e| ExportError::WriteError(e.to_string()))?;
 
     Ok(ExportResult {
@@ -462,5 +483,82 @@ mod tests {
             generate_lrc_content(&instrumental),
             Some("[au: instrumental]".to_string())
         );
+    }
+
+    fn metadata_track(file_path: String) -> PersistentTrack {
+        PersistentTrack {
+            id: 1,
+            file_path,
+            file_name: "song.flac".to_owned(),
+            title: "Air I Breathe".to_owned(),
+            album_name: "Portals".to_owned(),
+            album_artist_name: None,
+            album_id: 1,
+            artist_name: "Sub Focus".to_owned(),
+            artist_id: 1,
+            image_path: None,
+            track_number: None,
+            txt_lyrics: None,
+            lrc_lyrics: None,
+            lyricsfile: None,
+            lyricsfile_id: None,
+            duration: 250.72,
+            instrumental: false,
+            translation_status: "none".to_owned(),
+            translation_target_language: None,
+        }
+    }
+
+    #[test]
+    fn test_export_lrc_metadata_headers_preserve_original_translated_and_dual_lines() {
+        let directory = std::env::temp_dir().join(format!("lrcget-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let track = metadata_track(directory.join("song.flac").to_string_lossy().into_owned());
+        let header = "[ti:Air I Breathe]\n[ar:Sub Focus]\n[al:Portals]\n\n";
+        let source = "[00:24.00]Original line";
+        let translations = r#"{"lines":[{"source_index":0,"translated_text":"Translated line"}]}"#;
+        let mut bodies = Vec::new();
+        for mode in [
+            crate::translation::TranslationExportMode::Original,
+            crate::translation::TranslationExportMode::Translation,
+            crate::translation::TranslationExportMode::Dual,
+        ] {
+            bodies.push(
+                crate::translation::build_translated_lrc(source, translations, mode).unwrap(),
+            );
+        }
+        assert_eq!(bodies[0], source);
+        assert_eq!(bodies[1], "[00:24.00]Translated line");
+        assert_eq!(
+            bodies[2],
+            "[00:24.00]Original line\n[00:24.00]Translated line"
+        );
+        bodies.push(crate::lyricsfile::INSTRUMENTAL_LRC.to_owned());
+        for body in &bodies {
+            let parsed = ParsedLyricsfile {
+                plain_lyrics: None,
+                synced_lyrics: Some(body.clone()),
+                is_instrumental: body == crate::lyricsfile::INSTRUMENTAL_LRC,
+            };
+            let result = export_track_format(&track, &parsed, ExportFormat::Lrc).unwrap();
+            assert!(matches!(result.status, ExportStatus::Success));
+            assert_eq!(
+                std::fs::read_to_string(result.path.unwrap()).unwrap(),
+                format!("{header}{body}")
+            );
+            assert_eq!(parsed.synced_lyrics.as_deref(), Some(body.as_str()));
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn test_lrc_header_skips_empty_values_and_normalizes_newlines() {
+        let mut track = metadata_track(String::new());
+        track.title = "  Song\nTitle\rExtra  ".to_owned();
+        track.artist_name = "  ".to_owned();
+        track.album_name = String::new();
+        assert_eq!(build_lrc_header(&track), "[ti:Song Title Extra]\n\n");
+        track.title.clear();
+        assert_eq!(build_lrc_header(&track), "");
     }
 }
