@@ -40,7 +40,7 @@
       <button
         v-for="track in filteredTracks.slice(0, 10)"
         :key="track.id"
-        class="w-full text-left px-2 py-1 rounded transition flex items-center gap-1"
+        class="w-full text-left px-2 py-1 rounded-sm transition flex items-center gap-1"
         :class="[
           selectedTrack?.id === track.id
             ? 'bg-hoa-1100 text-white dark:bg-hoa-1100'

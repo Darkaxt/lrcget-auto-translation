@@ -14,14 +14,14 @@
     </div>
 
     <form
-      class="flex items-center rounded-full w-full max-w-screen-sm h-auto overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 transition"
+      class="flex items-center rounded-full w-full max-w-(--breakpoint-sm) h-auto overflow-hidden bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-700 transition"
       :class="{ 'ring-2 ring-hoa-1100/40': inputActive }"
       @submit.prevent="onSubmit"
     >
       <input
         v-model="keyword"
         type="text"
-        class="outline-none grow h-12 px-6 bg-transparent text-neutral-800 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+        class="outline-hidden grow h-12 px-6 bg-transparent text-neutral-800 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
         placeholder="Type a song title, album, or artist to find lyrics..."
         autofocus
         @focus="inputActive = true"

@@ -1,7 +1,7 @@
 <template>
   <BaseModal
     title="Search Lyrics"
-    content-class="w-full h-[80vh] max-w-screen-sm"
+    content-class="w-full h-[80vh] max-w-(--breakpoint-sm)"
     background="non-interactive"
     :lock-scroll="true"
     @close="emit('close')"
@@ -67,7 +67,7 @@
             <div
               v-for="result in normalizedSearchResult"
               :key="result.item.id"
-              class="rounded bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 transition px-2 py-1 flex gap-2"
+              class="rounded-sm bg-white dark:bg-neutral-900 hover:bg-neutral-50 dark:hover:bg-neutral-800 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 transition px-2 py-1 flex gap-2"
             >
               <div class="h-full overflow-hidden grow">
                 <div class="font-bold flex gap-1">
@@ -77,28 +77,28 @@
                   <template v-if="showLineCount === true">
                     <span
                       v-if="result.lyrics.syncedLyrics"
-                      class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded px-1 py-0.5"
+                      class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded-sm px-1 py-0.5"
                       >{{ countLines(result.lyrics.syncedLyrics) }} Lines</span
                     >
                     <span
                       v-else-if="result.lyrics.plainLyrics"
-                      class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded px-1 py-0.5"
+                      class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded-sm px-1 py-0.5"
                       >{{ countLines(result.lyrics.plainLyrics) }} Lines</span
                     >
                   </template>
                   <span
                     v-if="result.lyrics.syncedLyrics"
-                    class="text-white font-bold text-[0.65rem] bg-hoa-1100 rounded px-1 py-0.5"
+                    class="text-white font-bold text-[0.65rem] bg-hoa-1100 rounded-sm px-1 py-0.5"
                     >Synced</span
                   >
                   <span
                     v-else-if="result.lyrics.plainLyrics"
-                    class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded px-1 py-0.5"
+                    class="text-neutral-800 dark:text-neutral-300 font-bold text-[0.65rem] bg-neutral-200 dark:bg-neutral-700 rounded-sm px-1 py-0.5"
                     >Plain</span
                   >
                   <span
                     v-else-if="result.lyrics.instrumental"
-                    class="text-neutral-900 dark:text-neutral-200 font-bold text-[0.65rem] bg-neutral-300 dark:bg-neutral-600 rounded px-1 py-0.5"
+                    class="text-neutral-900 dark:text-neutral-200 font-bold text-[0.65rem] bg-neutral-300 dark:bg-neutral-600 rounded-sm px-1 py-0.5"
                     >Instrumental</span
                   >
                   <span

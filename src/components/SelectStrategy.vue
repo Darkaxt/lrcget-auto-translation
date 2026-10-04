@@ -3,7 +3,7 @@
     <div class="m-4 text-hoa-1500 text-sm">Select Strategy</div>
     <div class="flex mb-4 gap-4 text-gray-200">
       <button
-        class="text-left flex-1 border-4 rounded p-3 transition"
+        class="text-left flex-1 border-4 rounded-sm p-3 transition"
         :class="{
           'border-hoa-1400 bg-hoa-800/70': isCreateLRC,
           'border-transparent bg-hoa-800/30': !isCreateLRC,
@@ -18,7 +18,7 @@
       </button>
 
       <button
-        class="text-left flex-1 border-4 rounded p-3 transition"
+        class="text-left flex-1 border-4 rounded-sm p-3 transition"
         :class="{
           'border-hoa-1400 bg-hoa-800/70': isEmbed,
           'border-transparent bg-hoa-800/30': !isEmbed,
@@ -39,7 +39,7 @@
           id="skip-tracks"
           v-model="skipTracksHaveExistingLyrics"
           type="checkbox"
-          class="w-4 h-4 text-hoa-600 bg-hoa-1100 accent-hoa-1100 rounded border-hoa-300 focus:ring-hoa-500 focus:ring-2"
+          class="w-4 h-4 text-hoa-600 bg-hoa-1100 accent-hoa-1100 rounded-sm border-hoa-300 focus:ring-hoa-500 focus:ring-2"
         />
         <label for="skip-tracks" class="ml-2 text-sm font-medium text-hoa-1500"
           >Skip tracks that already have lyrics</label

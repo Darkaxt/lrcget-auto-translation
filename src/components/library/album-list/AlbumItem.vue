@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex w-full group hover:bg-neutral-50 hover:shadow hover:shadow-neutral-100/50 border border-transparent hover:border-neutral-100 transition rounded cursor-default dark:hover:bg-neutral-900 dark:hover:border-neutral-700 dark:hover:shadow-black/50"
+    class="flex w-full group hover:bg-neutral-50 hover:shadow-sm hover:shadow-neutral-100/50 border border-transparent hover:border-neutral-100 transition rounded-sm cursor-default dark:hover:bg-neutral-900 dark:hover:border-neutral-700 dark:hover:shadow-black/50"
   >
     <div v-if="album" class="p-1 flex flex-col grow" @click="$emit('openAlbum', album)">
         <div class="font-bold text-sm text-neutral-800 dark:text-neutral-200">
@@ -25,7 +25,7 @@
     <div class="flex items-center gap-2 p-1">
       <div v-if="album" class="transition gap-1">
         <button
-          class="text-neutral-800 hover:bg-hoa-1100 hover:text-white rounded p-2 transition dark:text-white dark:hover:bg-hoa-1100 dark:hover:text-white"
+          class="text-neutral-800 hover:bg-hoa-1100 hover:text-white rounded-sm p-2 transition dark:text-white dark:hover:bg-hoa-1100 dark:hover:text-white"
           @click.stop.prevent="downloadLyricsMultiple"
           :disabled="!album || album.id !== props.albumId"
           :aria-label="`Download lyrics for ${album?.name ?? ''}`"

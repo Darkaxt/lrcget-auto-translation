@@ -18,7 +18,7 @@
       >
         <div
           v-if="session.target.type !== 'library'"
-          class="px-2 pt-1 pb-2 text-sm font-bold text-neutral-800 dark:text-neutral-300 break-words max-h-24 overflow-y-auto"
+          class="px-2 pt-1 pb-2 text-sm font-bold text-neutral-800 dark:text-neutral-300 wrap-break-word max-h-24 overflow-y-auto"
         >
           {{ session.target.type === 'album' ? 'Album' : 'Artist' }} · {{ session.target.name }}
         </div>
@@ -99,7 +99,7 @@
         </p>
         <div class="px-2 py-2">
           <button
-            class="button w-full text-sm h-8 rounded"
+            class="button w-full text-sm h-8 rounded-sm"
             :class="canDownload ? 'button-primary' : 'button-disabled'"
             :disabled="!canDownload"
             @click="downloadAllLyrics"
@@ -149,6 +149,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@reference '../../style.css';
 .dropdown-container {
   @apply p-1 min-w-[10rem];
 }
@@ -158,7 +159,7 @@ onBeforeUnmount(() => {
 }
 
 .options-error {
-  @apply px-2 py-1 text-xs leading-relaxed break-words text-red-700 dark:text-red-400;
+  @apply px-2 py-1 text-xs leading-relaxed wrap-break-word text-red-700 dark:text-red-400;
 }
 
 .export-options .button-primary {
@@ -170,7 +171,7 @@ onBeforeUnmount(() => {
 }
 
 .dropdown-item {
-  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded cursor-pointer h-8 gap-1 w-full;
+  @apply flex items-center px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-700 rounded-sm cursor-pointer h-8 gap-1 w-full;
 }
 
 .dropdown-label {

@@ -7,7 +7,7 @@
           class="full-viewer absolute bottom-0 left-0 w-full h-[40vh] bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-200/50 dark:border-neutral-800/50 overflow-hidden"
         >
           <div
-            class="relative h-full rounded text-center text-neutral-700 whitespace-pre flex flex-col"
+            class="relative h-full rounded-sm text-center text-neutral-700 whitespace-pre flex flex-col"
           >
             <div class="flex justify-center items-center h-6 w-full relative z-10">
               <button
@@ -23,7 +23,7 @@
             </div>
 
             <button
-              class="absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 shadow"
+              class="absolute bottom-2 right-2 flex items-center gap-1 px-3 py-1 rounded-sm text-xs font-bold bg-neutral-100 text-neutral-800 dark:bg-neutral-900 dark:text-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 shadow-sm"
               type="button"
               :aria-label="copied ? 'Copied' : 'Copy'"
               @click.stop="onCopy"

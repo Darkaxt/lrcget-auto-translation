@@ -1,7 +1,7 @@
 <template>
   <BaseModal
     title="Preview"
-    content-class="w-full h-[60vh] max-w-screen-md"
+    content-class="w-full h-[60vh] max-w-(--breakpoint-md)"
     body-class="flex flex-col gap-4 h-full min-h-0"
     @close="emit('close')"
   >
@@ -62,10 +62,10 @@
       </div>
 
       <div
-        class="absolute top-0 left-0 w-full h-10 bg-gradient-to-b from-white dark:from-neutral-900"
+        class="absolute top-0 left-0 w-full h-10 bg-linear-to-b from-white dark:from-neutral-900"
       />
       <div
-        class="absolute bottom-0 left-0 w-full h-10 bg-gradient-to-t from-white dark:from-neutral-900"
+        class="absolute bottom-0 left-0 w-full h-10 bg-linear-to-t from-white dark:from-neutral-900"
       />
     </div>
 

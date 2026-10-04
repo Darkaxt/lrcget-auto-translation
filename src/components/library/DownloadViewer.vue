@@ -1,12 +1,12 @@
 <template>
   <BaseModal
-    content-class="w-full h-[80vh] max-w-screen-md"
+    content-class="w-full h-[80vh] max-w-(--breakpoint-md)"
     body-class="flex flex-col h-full min-h-0 justify-between gap-6"
     :title="isFinished ? 'Downloaded' : 'Downloading'"
     @close="checkAndClose"
   >
     <div class="flex flex-col items-center justify-center gap-1">
-      <div class="w-full bg-neutral-50 h-1 rounded">
+      <div class="w-full bg-neutral-50 h-1 rounded-sm">
         <div class="bg-hoa-1100 h-1" :style="{ width: progressWidth }" />
       </div>
       <div class="text-[0.7rem] text-neutral-500 dark:text-neutral-500 flex gap-3">

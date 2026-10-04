@@ -22,7 +22,7 @@
         <textarea
           id="flagReason"
           v-model="flagReason"
-          class="w-full p-2 rounded textarea"
+          class="w-full p-2 rounded-sm textarea"
           placeholder="Explain why you want to flag the lyrics..."
         />
       </div>

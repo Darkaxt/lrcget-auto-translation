@@ -1,6 +1,53 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' source('./');
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-neutral-50: #fafafa;
+  --color-neutral-100: #f5f5f5;
+  --color-neutral-200: #e5e5e5;
+  --color-neutral-300: #d4d4d4;
+  --color-neutral-400: #a3a3a3;
+  --color-neutral-500: #737373;
+  --color-neutral-600: #525252;
+  --color-neutral-700: #404040;
+  --color-neutral-800: #262626;
+  --color-neutral-900: #171717;
+  --color-neutral-950: #0a0a0a;
+  --default-ring-width: 3px;
+  --default-ring-color: var(--color-blue-500);
+  --color-hoa-0: #ffdbe4;
+  --color-hoa-100: #ffd9e2;
+  --color-hoa-200: #ffd4df;
+  --color-hoa-300: #ffcdda;
+  --color-hoa-400: #ffc3d3;
+  --color-hoa-500: #ffb7cb;
+  --color-hoa-600: #fea7c1;
+  --color-hoa-700: #fe96b7;
+  --color-hoa-800: #fc84ad;
+  --color-hoa-900: #fb73a4;
+  --color-hoa-1000: #f8639d;
+  --color-hoa-1100: #f35697;
+  --color-hoa-1200: #eb4a91;
+  --color-hoa-1300: #dc4089;
+  --color-hoa-1400: #c5367d;
+  --color-hoa-1500: #a82c6c;
+}
+
+/* Preserve Tailwind 3's implicit border color. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 body {
   @apply bg-white dark:bg-neutral-950 cursor-default;
@@ -38,11 +85,13 @@ body {
   background: #404040;
 }
 
-.button {
+.button,
+.secondary-page-back-button {
   @apply transition uppercase font-bold flex gap-1 items-center justify-center;
 }
 
-.button-normal {
+.button-normal,
+.secondary-page-back-button {
   @apply bg-neutral-100 hover:bg-neutral-200 text-neutral-900 active:bg-neutral-300
   dark:bg-neutral-800 dark:text-neutral-100
   dark:hover:bg-neutral-700 dark:active:bg-neutral-600;
@@ -80,11 +129,11 @@ body {
 }
 
 .button-tiny {
-  @apply text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 rounded p-2 transition;
+  @apply text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 rounded-sm p-2 transition;
 }
 
 .link {
-  @apply text-hoa-1200 dark:text-hoa-400 hover:text-hoa-1300 hover:dark:text-hoa-300 transition text-sm;
+  @apply text-hoa-1200 dark:text-hoa-400 hover:text-hoa-1300 dark:hover:text-hoa-300 transition text-sm;
 }
 
 .group-label {
@@ -96,7 +145,7 @@ body {
 }
 
 .input {
-  @apply bg-white box-border border border-neutral-300 focus:border-hoa-1100 outline-none
+  @apply bg-white box-border border border-neutral-300 focus:border-hoa-1100 outline-hidden
   text-sm rounded-full transition text-neutral-900 placeholder:text-neutral-400
   dark:bg-neutral-900 dark:border-neutral-700 dark:focus:border-hoa-1100 dark:text-neutral-100
   dark:placeholder:text-neutral-600;
@@ -107,7 +156,7 @@ body {
 }
 
 .select {
-  @apply box-border border border-neutral-300 rounded transition outline-none text-neutral-900 bg-white px-2 py-1 pr-6 text-sm
+  @apply box-border border border-neutral-300 rounded-sm transition outline-hidden text-neutral-900 bg-white px-2 py-1 pr-6 text-sm
   dark:border-neutral-600 dark:text-neutral-100 dark:bg-neutral-800;
   -webkit-appearance: none;
   appearance: none;
@@ -130,7 +179,7 @@ body {
 }
 
 .textarea {
-  @apply bg-white box-border border border-neutral-300 focus:border-hoa-1100 outline-none
+  @apply bg-white box-border border border-neutral-300 focus:border-hoa-1100 outline-hidden
   text-sm rounded-lg transition text-neutral-900 placeholder:text-neutral-400 resize-none
   dark:bg-neutral-900 dark:border-neutral-700 dark:focus:border-hoa-1100 dark:text-neutral-100
   dark:placeholder:text-neutral-600;
@@ -218,7 +267,7 @@ body {
 }
 
 .v-popper--theme-lrcget-dropdown .v-popper__inner {
-  @apply bg-white dark:bg-neutral-800 rounded shadow-lg shadow-neutral-900/10 dark:shadow-black/50;
+  @apply bg-white dark:bg-neutral-800 rounded-sm shadow-lg shadow-neutral-900/10 dark:shadow-black/50;
 }
 
 .v-popper--theme-lrcget-dropdown .v-popper__arrow-outer {
@@ -226,7 +275,7 @@ body {
 }
 
 .codemirror-custom .cm-editor {
-  @apply outline-none h-full cursor-text;
+  @apply outline-hidden h-full cursor-text;
 }
 
 .codemirror-custom .cm-cursor {
@@ -245,7 +294,7 @@ body {
 
 .codemirror-custom .cm-line {
   /* Text folding */
-  @apply text-neutral-900 dark:text-neutral-100 break-words whitespace-pre-wrap w-full;
+  @apply text-neutral-900 dark:text-neutral-100 wrap-break-word whitespace-pre-wrap w-full;
 }
 
 .codemirror-custom .cm-activeLine {
@@ -265,5 +314,5 @@ body {
 }
 
 .secondary-page-back-button {
-  @apply button button-normal transition rounded-full p-4;
+  @apply rounded-full p-4;
 }

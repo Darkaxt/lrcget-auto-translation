@@ -2,7 +2,7 @@
   <BaseModal
     :click-to-close="false"
     :esc-to-close="false"
-    content-class="w-full h-[95vh] max-w-screen-lg"
+    content-class="w-full h-[95vh] max-w-(--breakpoint-lg)"
     body-class="grow"
     :title="modalTitle"
     @close="handleClose"

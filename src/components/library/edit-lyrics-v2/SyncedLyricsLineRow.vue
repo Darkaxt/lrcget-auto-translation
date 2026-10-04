@@ -8,7 +8,7 @@
     @click="emit('select', index)"
     @mousedown="handleMouseDown"
   >
-    <div class="flex items-center gap-1 w-[3.5rem]">
+    <div class="flex items-center gap-1 w-14">
       <button
         v-show="isLineControlsVisible"
         class="button p-1 rounded-full text-sm h-6 w-6"
@@ -39,7 +39,7 @@
         <Rewind />
       </button>
       <div
-        class="px-3 py-0.5 text-xs font-mono rounded-full bg-hoa-100 dark:bg-hoa-1500 text-hoa-1300 dark:text-hoa-200 min-w-[5.75rem] text-center"
+        class="px-3 py-0.5 text-xs font-mono rounded-full bg-hoa-100 dark:bg-hoa-1500 text-hoa-1300 dark:text-hoa-200 min-w-23 text-center"
         :class="{ 'font-bold': isLinePlaying }"
       >
         {{ timestampText }}
@@ -58,7 +58,7 @@
       v-if="isEditing"
       :ref="setLineInputRef"
       v-model="editingTextProxy"
-      class="grow h-full px-2 rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 outline-none"
+      class="grow h-full px-2 rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 outline-hidden"
       :class="{ 'font-bold': isLinePlaying }"
       @blur="emit('save-edit')"
       @keydown.enter.prevent="emit('save-edit')"
@@ -112,7 +112,7 @@
         </button>
         <div
           v-show="isLineControlsVisible || hasEndTimestampDiffDirection"
-          class="px-3 py-0.5 text-xs font-mono rounded-full min-w-[5.75rem] text-center"
+          class="px-3 py-0.5 text-xs font-mono rounded-full min-w-23 text-center"
           :class="endTimestampPillClass"
           :title="endTimestampPillTitle"
         >
@@ -140,7 +140,7 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-1 w-[3.5rem] justify-end">
+    <div class="flex items-center gap-1 w-14 justify-end">
       <button
         v-show="isLineControlsVisible"
         class="button p-1 rounded-full text-sm h-6 w-6 bg-neutral-200 hover:bg-neutral-300 dark:bg-neutral-700 hover:dark:bg-neutral-600 text-red-500 dark:text-red-400"

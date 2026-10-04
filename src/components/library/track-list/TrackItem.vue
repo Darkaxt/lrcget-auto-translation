@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex w-full group hover:bg-neutral-50 hover:shadow hover:shadow-neutral-100/50 border hover:border-neutral-100 transition rounded cursor-default dark:hover:bg-neutral-900 dark:hover:border-neutral-700 dark:hover:shadow-black/50"
+    class="flex w-full group hover:bg-neutral-50 hover:shadow-sm hover:shadow-neutral-100/50 border hover:border-neutral-100 transition rounded-sm cursor-default dark:hover:bg-neutral-900 dark:hover:border-neutral-700 dark:hover:shadow-black/50"
     :class="{
       'border-neutral-100 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900': isPlaying,
       'border-transparent': !isPlaying,
@@ -57,37 +57,37 @@
       <div v-if="track" class="flex flex-col items-center gap-1">
         <span
           v-if="lyricsStatus === 'instrumental'"
-          class="text-gray-200 font-bold text-[0.67rem] bg-gray-500 rounded px-1 py-0.5"
+          class="text-gray-200 font-bold text-[0.67rem] bg-gray-500 rounded-sm px-1 py-0.5"
           >Instrumental</span
         >
         <span
           v-else-if="lyricsStatus === 'synced'"
-          class="text-green-200 font-bold text-[0.67rem] bg-green-800 rounded px-1 py-0.5"
+          class="text-green-200 font-bold text-[0.67rem] bg-green-800 rounded-sm px-1 py-0.5"
           >Synced</span
         >
         <span
           v-else-if="lyricsStatus === 'plain'"
-          class="text-gray-200 font-bold text-[0.67rem] bg-gray-800 rounded px-1 py-0.5"
+          class="text-gray-200 font-bold text-[0.67rem] bg-gray-800 rounded-sm px-1 py-0.5"
           >Plain</span
         >
         <span
           v-if="translationStatus === 'translated'"
-          class="text-blue-100 font-bold text-[0.67rem] bg-blue-800 rounded px-1 py-0.5"
+          class="text-blue-100 font-bold text-[0.67rem] bg-blue-800 rounded-sm px-1 py-0.5"
           >Translated</span
         >
         <span
           v-else-if="translationStatus === 'pending'"
-          class="text-yellow-100 font-bold text-[0.67rem] bg-yellow-700 rounded px-1 py-0.5"
+          class="text-yellow-100 font-bold text-[0.67rem] bg-yellow-700 rounded-sm px-1 py-0.5"
           >Pending</span
         >
         <span
           v-else-if="translationStatus === 'failed'"
-          class="text-red-100 font-bold text-[0.67rem] bg-red-800 rounded px-1 py-0.5"
+          class="text-red-100 font-bold text-[0.67rem] bg-red-800 rounded-sm px-1 py-0.5"
           >Failed</span
         >
         <span
           v-else-if="translationStatus === 'already_target_language'"
-          class="text-cyan-100 font-bold text-[0.67rem] bg-cyan-800 rounded px-1 py-0.5"
+          class="text-cyan-100 font-bold text-[0.67rem] bg-cyan-800 rounded-sm px-1 py-0.5"
           >{{ alreadyTargetLanguageLabel }}</span
         >
       </div>
@@ -281,7 +281,8 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@reference '../../../style.css';
 .track-button {
-  @apply text-neutral-800 hover:bg-hoa-1100 hover:text-white rounded p-2 transition dark:text-white dark:hover:bg-hoa-1100;
+  @apply text-neutral-800 hover:bg-hoa-1100 hover:text-white rounded-sm p-2 transition dark:text-white dark:hover:bg-hoa-1100;
 }
 </style>

@@ -34,7 +34,7 @@
 
     <div
       v-if="showNextWordHint"
-      class="absolute left-1/2 top-full z-40 mt-1 -translate-x-1/2 px-2 py-0.5 rounded-md border border-hoa-1100/40 bg-hoa-1100 text-xs font-medium leading-4 text-white shadow-sm whitespace-nowrap pointer-events-none"
+      class="absolute left-1/2 top-full z-40 mt-1 -translate-x-1/2 px-2 py-0.5 rounded-md border border-hoa-1100/40 bg-hoa-1100 text-xs font-medium leading-4 text-white shadow-xs whitespace-nowrap pointer-events-none"
       :style="{ left: 0 }"
       :title="`Next word: ${nextWordHintText}`"
     >
