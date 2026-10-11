@@ -54,6 +54,24 @@ jobs:
       - name: Build frontend for Rust context
         run: npm run build
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked -- --nocapture
       - name: Build Tauri application
-        run: npm run tauri -- build
+        run: npm run tauri -- build -- --locked
+      - name: Verify native application startup on isolated runner
+        run: node tools/release-smoke.cjs src-tauri/target/release/LRCGET.exe
+      - name: Retain startup verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-startup-smoke
+          path: ${{ runner.temp }}/lrcget-startup-smoke
+          retention-days: 7
+      - name: Retain verified Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-bundles
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 7
