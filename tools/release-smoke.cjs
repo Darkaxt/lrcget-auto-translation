@@ -34,20 +34,47 @@ const child = spawn(binary, [], {
 console.log(`Started isolated native probe, PID ${child.pid}`);
 const exited = new Promise(resolve => child.once('exit', resolve));
 let socket;
+let discoverySocket;
 async function main() {
-  const port = await new Promise((resolve, reject) => {
+  const endpoint = await new Promise((resolve, reject) => {
     const check = () => {
       if (!fs.existsSync(portFile)) return;
-      const value = fs.readFileSync(portFile, 'utf8').split(/\r?\n/)[0];
-      if (/^\d+$/.test(value)) resolve(Number(value));
+      const [value, browserPath] = fs.readFileSync(portFile, 'utf8').split(/\r?\n/);
+      if (/^\d+$/.test(value) && browserPath?.startsWith('/devtools/browser/')) {
+        resolve({ port: Number(value), browserPath });
+      }
     };
     watcher.on('change', check);
     child.once('error', reject);
     child.once('exit', code => reject(new Error(`Exited before WebView readiness: ${code}`)));
     check();
   });
+  const { port, browserPath } = endpoint;
   watcher.close();
   console.log(`WebView debugging endpoint ready on port ${port}`);
+  // The browser endpoint precedes page creation/navigation. Wait for CDP's
+  // actual target event instead of racing a one-shot /json/list request.
+  discoverySocket = new WebSocket(`ws://127.0.0.1:${port}${browserPath}`);
+  await new Promise((resolve, reject) => {
+    discoverySocket.addEventListener('open', resolve, { once: true });
+    discoverySocket.addEventListener('error', reject, { once: true });
+  });
+  await new Promise((resolve, reject) => {
+    const onExit = code => reject(new Error(`Exited before application page readiness: ${code}`));
+    child.once('exit', onExit);
+    discoverySocket.addEventListener('close', () => reject(new Error('Target discovery closed before readiness')), { once: true });
+    discoverySocket.addEventListener('message', event => {
+      const message = JSON.parse(event.data);
+      if (message.error) reject(new Error(JSON.stringify(message.error)));
+      const target = message.params?.targetInfo;
+      if (target) console.log(`WebView target: ${target.type} ${target.url}`);
+      if (target?.type === 'page' && target.url === 'https://tauri.localhost/') {
+        child.removeListener('exit', onExit);
+        resolve();
+      }
+    });
+    discoverySocket.send(JSON.stringify({ id: 1, method: 'Target.setDiscoverTargets', params: { discover: true } }));
+  });
   const response = await fetch(`http://127.0.0.1:${port}/json/list`);
   assert.ok(response.ok);
   const targets = await response.json();
@@ -58,6 +85,7 @@ async function main() {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', reject, { once: true });
   });
+  discoverySocket.close();
   let id = 0;
   const pending = new Map();
   const errors = [];
@@ -119,6 +147,7 @@ main().catch(error => {
     `Remove-ItemProperty -LiteralPath '${policy}' -Name 'LRCGET.exe' -ErrorAction Stop`],
   { windowsHide: true });
   if (socket) socket.close();
+  if (discoverySocket) discoverySocket.close();
   if (child.exitCode === null) {
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       `$p=Get-Process -Id ${child.pid} -ErrorAction Stop; if(-not $p.CloseMainWindow()){throw 'Cannot close smoke-test window'}; $p.WaitForExit()`],
