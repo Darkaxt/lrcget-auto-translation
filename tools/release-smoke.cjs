@@ -16,6 +16,12 @@ const portFile = path.join(profile, 'EBWebView', 'DevToolsActivePort');
 fs.mkdirSync(path.dirname(portFile), { recursive: true });
 const watcher = fs.watch(path.dirname(portFile));
 const log = fs.openSync(path.join(output, 'startup.log'), 'w');
+// Elevated WebView2 150+ ignores environment-based debugging arguments.
+// This app-specific policy exists only for the disposable hosted-runner probe.
+const policy = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
+execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+  `$key='${policy}'; if((Get-ItemProperty -LiteralPath $key -Name 'LRCGET.exe' -ErrorAction SilentlyContinue)) { throw 'Existing smoke policy must not be overwritten' }; New-Item -Path $key -Force | Out-Null; New-ItemProperty -LiteralPath $key -Name 'LRCGET.exe' -Value '--remote-debugging-port=0' -PropertyType String | Out-Null`],
+{ windowsHide: true });
 const child = spawn(binary, [], {
   windowsHide: true,
   stdio: ['ignore', log, log],
@@ -25,6 +31,7 @@ const child = spawn(binary, [], {
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=0',
   },
 });
+console.log(`Started isolated native probe, PID ${child.pid}`);
 const exited = new Promise(resolve => child.once('exit', resolve));
 let socket;
 async function main() {
@@ -40,6 +47,7 @@ async function main() {
     check();
   });
   watcher.close();
+  console.log(`WebView debugging endpoint ready on port ${port}`);
   const response = await fetch(`http://127.0.0.1:${port}/json/list`);
   assert.ok(response.ok);
   const targets = await response.json();
@@ -78,6 +86,7 @@ async function main() {
     socket.send(JSON.stringify({ id: next, method, params }));
   });
   await send('Runtime.enable');
+  console.log('Attached to application WebView; waiting for initial UI');
   const result = await send('Runtime.evaluate', {
     awaitPromise: true,
     returnByValue: true,
@@ -106,6 +115,9 @@ main().catch(error => {
   process.exitCode = 1;
 }).finally(async () => {
   watcher.close();
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    `Remove-ItemProperty -LiteralPath '${policy}' -Name 'LRCGET.exe' -ErrorAction Stop`],
+  { windowsHide: true });
   if (socket) socket.close();
   if (child.exitCode === null) {
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
