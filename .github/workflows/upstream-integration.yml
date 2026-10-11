@@ -54,9 +54,9 @@ jobs:
       - name: Build frontend for Rust context
         run: npm run build
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml -- --nocapture
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked -- --nocapture
       - name: Build Tauri application
-        run: npm run tauri -- build
+        run: npm run tauri -- build -- --locked
       - name: Verify native application startup on isolated runner
         run: node tools/release-smoke.cjs src-tauri/target/release/LRCGET.exe
       - name: Retain startup verification evidence
