@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
+const { readEndpoint } = require('./release-smoke-endpoint.cjs');
 
 // Known-folder SQLite paths cannot be isolated with APPDATA overrides on Windows.
 // Run only on disposable GitHub-hosted Windows runners, never on a user's machine.
@@ -18,10 +19,9 @@ const watcher = fs.watch(path.dirname(portFile));
 const log = fs.openSync(path.join(output, 'startup.log'), 'w');
 // Elevated WebView2 150+ ignores environment-based debugging arguments.
 // This app-specific policy exists only for the disposable hosted-runner probe.
-const policy = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
-execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-  `$key='${policy}'; if((Get-ItemProperty -LiteralPath $key -Name 'LRCGET.exe' -ErrorAction SilentlyContinue)) { throw 'Existing smoke policy must not be overwritten' }; New-Item -Path $key -Force | Out-Null; New-ItemProperty -LiteralPath $key -Name 'LRCGET.exe' -Value '--remote-debugging-port=0' -PropertyType String | Out-Null`],
-{ windowsHide: true });
+const windowsHelper = path.join(__dirname, 'release-smoke-windows.ps1');
+const windowsArgs = ['-NoProfile', '-NonInteractive', '-File', windowsHelper];
+execFileSync('powershell.exe', [...windowsArgs, '-Action', 'Configure'], { windowsHide: true });
 const child = spawn(binary, [], {
   windowsHide: true,
   stdio: ['ignore', log, log],
@@ -38,13 +38,15 @@ let discoverySocket;
 async function main() {
   const endpoint = await new Promise((resolve, reject) => {
     const check = () => {
-      if (!fs.existsSync(portFile)) return;
-      const [value, browserPath] = fs.readFileSync(portFile, 'utf8').split(/\r?\n/);
-      if (/^\d+$/.test(value) && browserPath?.startsWith('/devtools/browser/')) {
-        resolve({ port: Number(value), browserPath });
+      try {
+        const value = readEndpoint(portFile);
+        if (value) resolve(value);
+      } catch (error) {
+        reject(error);
       }
     };
     watcher.on('change', check);
+    watcher.once('error', reject);
     child.once('error', reject);
     child.once('exit', code => reject(new Error(`Exited before WebView readiness: ${code}`)));
     check();
@@ -143,14 +145,11 @@ main().catch(error => {
   process.exitCode = 1;
 }).finally(async () => {
   watcher.close();
-  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-    `Remove-ItemProperty -LiteralPath '${policy}' -Name 'LRCGET.exe' -ErrorAction Stop`],
-  { windowsHide: true });
+  execFileSync('powershell.exe', [...windowsArgs, '-Action', 'Reset'], { windowsHide: true });
   if (socket) socket.close();
   if (discoverySocket) discoverySocket.close();
   if (child.exitCode === null) {
-    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      `$p=Get-Process -Id ${child.pid} -ErrorAction Stop; if(-not $p.CloseMainWindow()){throw 'Cannot close smoke-test window'}; $p.WaitForExit()`],
+    execFileSync('powershell.exe', [...windowsArgs, '-Action', 'Close', '-OwnedProcessId', String(child.pid), '-BinaryPath', binary],
     { windowsHide: true });
     assert.equal(await exited, 0, 'Application exited unsuccessfully');
   }
