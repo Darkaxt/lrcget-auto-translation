@@ -141,6 +141,7 @@ describe('submitted export choices', () => {
   })
 
   it('isolates download batches and keeps an export failure in the existing success log', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
     const downloader = (await import('./downloader.js')).useDownloader()
     const message = 'Synced lyrics downloaded; LRC export failed: permission denied'
     invoke.mockImplementation(async (command, args) => {
@@ -156,7 +157,8 @@ describe('submitted export choices', () => {
     downloader.addToQueue([3], choice)
     downloader.addToQueue([4]) // Other download entry points do not inherit remembered formats.
     void downloader.downloadNext()
-    await vi.advanceTimersByTimeAsync(5)
+    // Four jobs require three 500 ms LRCLIB request-spacing intervals.
+    await vi.advanceTimersByTimeAsync(1500)
     const calls = invoke.mock.calls
       .filter(([name]) => name === 'download_lyrics')
       .map(([, args]) => args)
