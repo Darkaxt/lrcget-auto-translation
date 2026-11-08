@@ -42,8 +42,8 @@ Module-level ref composables (singletons by design):
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `useGlobalState()`   | `isHotkey`, `themeMode`, `lrclibInstance`                                                                                                                                       |
 | `usePlayer()`        | `playingTrack`, `status`, `duration`, `progress`, `volume`. Supports both library tracks (with `id`) and file-based tracks (with `file_path`). Listens to `player-state` events |
-| `useDownloader()`    | Download queue, progress. Loop started by App.vue at boot                                                                                                                       |
-| `useExporter()`      | Mass export queue, progress. Used by ExportViewer modal                                                                                                                         |
+| `useDownloader()`    | Download queue, progress, 500 ms + jitter request spacing, and LRCLIB cooldown pause. Loop started by App.vue at boot                                                             |
+| `useExporter()`      | Mass export queue, progress; each queued track retains submitted formats. Used by ExportViewer modal                                                                                                                         |
 | `useSearchLibrary()` | Shared search text and track-centric filters; used by Tracks, Albums, and Artists tabs |
 | `useSearchLyrics()`  | Search modal state                                                                                                                                                              |
 | `useEditLyricsV2()`  | Edit lyrics modal state                                                                                                                                                         |
@@ -73,6 +73,7 @@ Module-level ref composables (singletons by design):
 - Search via `useSearchLibrary()`; shared search text across Tracks/Albums/Artists tabs
 - `MiniSearch.vue` with context-aware placeholder; filter dropdown hidden for Albums/Artists
 - All tabs use virtualized lists (`@tanstack/vue-virtual`) with IDs only
+- `TrackItem.vue` rows derive `instrumental` / `word-synced` / `synced` / `plain` from the joined `lyricsfile`; word-synced rows use the same gradient **Word Synced** badge as search results
 - Clickable album/artist names in track rows and the NowPlaying panel navigate to the respective tab and open the entity detail view (`AlbumTrackList`/`ArtistTrackList`)
 
 **Lyrics Workflows**:
@@ -80,13 +81,32 @@ Module-level ref composables (singletons by design):
 | Aspect | Details |
 |--------|---------|
 | **Display** | `LyricsViewer.vue` (synced) / `PlainLyricsViewer.vue`. Click to `seek()` |
-| **Search** | `SearchLyrics.vue` + `Preview.vue` for LRCLIB lookup; word-level highlight when available |
+| **Search** | `SearchLyrics.vue` + `Preview.vue` for LRCLIB lookup. Search results come from the lightweight v2 summaries and show availability badges (Word Synced / Synced / Plain / Instrumental); preview and apply fetch the selected record with `retrieve_lyrics_by_id` / `apply_lyrics`. Word-level highlight when the fetched lyricsfile has word timings. |
 | **Normalization** | `normalizeLrclibLyrics()` derives plain/synced/instrumental from `lyricsfile` when LRCLIB omits direct fields |
 | **Edit/Publish** | `EditLyricsV2.vue` + `useEditLyricsV2Publish.js` + `useEditLyricsV2Export.js`. For detailed editor behavior, see **Edit/Publish Details** below. |
 | **Keyboard Shortcuts** | `KeyboardShortcutsModal.vue` + shared registry in `composables/edit-lyrics-v2/shortcutRegistry.js`. See **Keyboard Shortcuts Details** below. |
 | **Mass Export** | `LibraryHeader.vue` → `ExportViewer.vue` → `useExporter()` queue → `export_track_lyrics` per track |
 | **My LRCLIB** | User workflows (preview, edit, publish, flag) in `my-lrclib/` |
 | **Track Association** | My LRCLIB edit flow: `prepare_lrclib_lyricsfile()` → `AssociateTrackModal.vue` → `EditLyricsV2.vue` with `trackId: null` (temporary association only) |
+
+### Download and Export preferences
+
+`Library.vue` mounts one `DownloadOptionsPopup.vue` for the library-wide button and the album/artist row and detail Download actions. `useDownloadOptions()` owns the shared draft, hydration, submission, and queue preparation. `useDownloadTrigger()` captures an immutable target ID/name and the clicked anchor; row triggers hold no separate popup or preference state. Scrolling outside the popup, recycling/unmounting its trigger, Escape, or dismissal clears the draft. Late hydration or hide events from an older target cannot change the new session. Only confirmation saves preferences and queues tracks for the captured target with the confirmed filters. The manual Export popup stays separate. `useExportPreferences()` (`composables/export-preferences.js`) provides one reactive source backed by `get_config` / scoped `set_export_preferences` commands. Both popups load drafts on opening and save only on submission; dismissing discards drafts. No browser storage is used. Popup styling is scoped to `DownloadOptionsPopup.vue` and manual Export in `LibraryHeader.vue`: theme-aware error text, readable disabled actions, darker accent action backgrounds for text contrast, and viewport-bounded scrolling.
+
+The Download popup also drafts the three existing Configuration “Download lyrics for” choices above a separator and the auto-export controls. `utils/download-filter.js` matches Configuration’s skip-flag mapping (plain-flag precedence), and submission saves those existing flags with export preferences in one scoped update. Queue filters use the captured submission, not returned/re-read config. Configuration remains available and refreshes from `get_config` before opening. The popup contains controls and actionable errors without explanatory export copy.
+
+Shared fields are `export_txt`, `export_lrc`, and `export_embedded`. `auto_export_enabled` belongs only to Download. Download updates applicable format choices when enabled; turning it off preserves all formats. Manual Export does not update the toggle. Both popups show the embedded choice under the experimental `try_embed_lyrics` gate and preserve its remembered value when disabled. Defaults: auto-export off, LRC selected, TXT/embedded off. Automatic export accepts embed-only batches when the gate is enabled; at least one effective format is required.
+
+`downloader.js` queues `{ trackId, autoExport }` entries; `autoExport` is an immutable TXT/LRC/embedded snapshot or null. The album/artist row actions (`AlbumItem.vue`, `ArtistItem.vue`) and detail actions (`AlbumTrackList.vue`, `ArtistTrackList.vue`) use the same popup and snapshots as Download All. Scope queries use `get_album_track_ids` / `get_artist_track_ids` with the submitted skip flags; library-wide queries retain their existing presence filters. Single-track Download, Apply, and editor saves are unchanged. `export.js` queues `{ trackId, formats }` with immutable ordered TXT/LRC/embedded selections. Subsequent submissions cannot mutate queued batches.
+
+`download_lyrics` returns a string on success, with post-save export failures appended and kept on the existing green success/FOUND log path in `DownloadViewer.vue`. On failure it rejects with a structured `DownloadLyricsError`. Batch downloads use the retry policy and the queue pauses on rate-limit errors; see **Download Queue** below. The shared writers still overwrite targets and delete the opposite sidecar; format-operation success does not imply both files remain.
+
+### Download Queue
+
+- `useDownloader()` processes one track at a time.
+- Requests are spaced by **500 ms + 0–250 ms jitter** to stay under LRCLIB's per-IP rate limit.
+- On failure, `download_lyrics` rejects with a structured error object (`kind`, `message`, `retryAfterSecs`, `scope`).
+- On a rate-limit/server-overload error with `retryAfterSecs`, the queue pauses before the next track and `DownloadViewer.vue` shows a countdown. The Rust client also enforces its own cooldown, so the frontend pause is a UI/queue-level complement rather than the sole guard.
 
 ### Edit/Publish Details
 
@@ -95,6 +115,7 @@ Module-level ref composables (singletons by design):
 - Props/context: `audioSource` (playback source), `lyricsfile` (editing target), `trackId` (save behavior)
 - Instrumental mode: toggle via `PlainLyricsEmptyState.vue` / `SyncedLyricsEmptyState.vue`
 - Publish/export: handled by `useEditLyricsV2Publish.js` and `useEditLyricsV2Export.js`
+- Publish/flag write retries: on explicit 429/503, Rust retries up to 3 times with a fresh challenge/PoW token. The progress table shows `Retrying...` during the wait; the payload is never replayed with the same one-time token.
 - Synced lines: multi-line selection via drag and Ctrl/Cmd+click, with floating bulk rewind/forward/delete toolbar
 - Synced line nudge shortcuts: `Left`/`Right` adjust selected line start by `-/+100ms`; `Shift+Left`/`Shift+Right` adjust selected line end by `-/+100ms`
 - End timestamp visibility: in synced rows, the end timestamp pill stays visible even without hover when it differs from the next line's start timestamp (helps surface gaps/overlaps), and color-codes direction (`before` = gap, `after` = overlap)

@@ -54,6 +54,9 @@ jobs:
       - name: Build frontend for Rust context
         run: npm run build
       - name: Run Rust tests
+        # Keep the explicit repository-required check on the isolated runner.
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Run Rust test suite
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked -- --nocapture
       - name: Build Tauri application
         run: npm run tauri -- build -- --locked
