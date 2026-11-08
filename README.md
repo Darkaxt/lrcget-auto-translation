@@ -19,13 +19,12 @@ Translations are local/user-owned data and are not published back to LRCLIB.
 
 ## Download
 
-Latest packaged fork build: [v2.1.0-at.9](https://github.com/Darkaxt/lrcget-auto-translation/releases/tag/v2.1.0-at.9)
+Packaged fork builds: [Auto-Translation releases](https://github.com/Darkaxt/lrcget-auto-translation/releases).
 
 Windows:
 
-- EXE installer, recommended: [LRCGET-AutoTranslation-v2.1.0-at.9-win-x64-setup.exe](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.9/LRCGET-AutoTranslation-v2.1.0-at.9-win-x64-setup.exe)
-- MSI installer: [LRCGET-AutoTranslation-v2.1.0-at.9-win-x64.msi](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.9/LRCGET-AutoTranslation-v2.1.0-at.9-win-x64.msi)
-- Checksums: [SHA256SUMS.txt](https://github.com/Darkaxt/lrcget-auto-translation/releases/download/v2.1.0-at.9/SHA256SUMS.txt)
+- Choose the Windows x64 EXE installer (recommended) or MSI from the newest fork release.
+- Verify the download against that release's `SHA256SUMS.txt`.
 
 Linux and macOS fork binaries are not currently published. Use the upstream [LRCGET releases](https://github.com/tranxuanthang/lrcget/releases) if you need an official non-Windows build without the translation fork changes.
 

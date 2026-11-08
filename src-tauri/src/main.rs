@@ -18,6 +18,7 @@ pub mod utils;
 pub mod word_segmentation;
 
 use anyhow::Context;
+use lrclib::client::{LrclibError, LrclibErrorKind, RetryPolicy};
 use persistent_entities::{
     PersistentAlbum, PersistentArtist, PersistentConfig, PersistentTrack, PlayableTrack,
 };
@@ -25,6 +26,7 @@ use player::Player;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use state::{AppState, Notify, NotifyType, ServiceAccess};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use translation::{LyricTranslation, LyricTranslationUpsert, TranslationRequest};
 
@@ -36,6 +38,73 @@ struct ResolvedLyricsPayload {
 }
 
 const LRCLIB_TRACK_NOT_FOUND: &str = "This track does not exist in LRCLIB database";
+const MAX_WRITE_ATTEMPTS: u32 = 3;
+const MAX_WRITE_RETRY_WAIT: Duration = Duration::from_secs(5);
+
+/// Structured error returned by `download_lyrics` so the frontend can pause
+/// the queue when LRCLIB asks the client to wait.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadLyricsError {
+    kind: String,
+    message: String,
+    retry_after_secs: Option<u64>,
+    scope: Option<String>,
+}
+
+impl DownloadLyricsError {
+    fn not_found(message: String) -> Self {
+        Self {
+            kind: "notFound".to_owned(),
+            message,
+            retry_after_secs: None,
+            scope: None,
+        }
+    }
+
+    fn from_lrclib_error(error: LrclibError) -> Self {
+        let kind = match error.kind {
+            LrclibErrorKind::NotFound => "notFound",
+            LrclibErrorKind::Validation => "validation",
+            LrclibErrorKind::Unauthorized => "unauthorized",
+            LrclibErrorKind::RateLimited => "rateLimited",
+            LrclibErrorKind::ServerOverloaded => "serverOverloaded",
+            LrclibErrorKind::ServerError => "serverError",
+            LrclibErrorKind::Network => "network",
+            LrclibErrorKind::Unexpected => "unexpected",
+        };
+
+        Self {
+            kind: kind.to_owned(),
+            message: error.to_string(),
+            retry_after_secs: error.retry_after.map(|delay| delay.as_secs().max(1)),
+            scope: error.scope,
+        }
+    }
+}
+
+impl From<String> for DownloadLyricsError {
+    fn from(message: String) -> Self {
+        Self {
+            kind: "internal".to_owned(),
+            message,
+            retry_after_secs: None,
+            scope: None,
+        }
+    }
+}
+
+impl From<&str> for DownloadLyricsError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+impl From<LrclibError> for DownloadLyricsError {
+    fn from(error: LrclibError) -> Self {
+        Self::from_lrclib_error(error)
+    }
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1139,7 +1208,7 @@ async fn download_lyrics(
     track_id: i64,
     auto_export: Option<AutoExportOptions>,
     app_handle: AppHandle,
-) -> Result<String, String> {
+) -> Result<String, DownloadLyricsError> {
     let export_formats = auto_export.map(AutoExportOptions::formats).transpose()?;
     let track = app_handle
         .db(|db| db::get_track_by_id(track_id, db))
@@ -1153,9 +1222,9 @@ async fn download_lyrics(
         &track.artist_name,
         track.duration,
         &config.lrclib_instance,
+        RetryPolicy::Batch,
     )
-    .await
-    .map_err(|err| err.to_string())?;
+    .await?;
     let resolved = resolve_lrclib_lyrics_payload(lrclib_response)?;
 
     let message = if resolved.is_instrumental {
@@ -1165,7 +1234,9 @@ async fn download_lyrics(
     } else if !resolved.plain_lyrics.is_empty() {
         "Plain lyrics downloaded"
     } else {
-        return Err(LRCLIB_TRACK_NOT_FOUND.to_owned());
+        return Err(DownloadLyricsError::not_found(
+            LRCLIB_TRACK_NOT_FOUND.to_owned(),
+        ));
     };
 
     // Build lyricsfile content from the resolved response
@@ -1254,14 +1325,26 @@ fn embedding_allowed(app_handle: &AppHandle) -> bool {
 #[tauri::command]
 async fn apply_lyrics(
     track_id: i64,
-    lrclib_response: lrclib::get::RawResponse,
+    lrclib_id: i64,
     app_handle: AppHandle,
 ) -> Result<String, String> {
     let track = app_handle
         .db(|db| db::get_track_by_id(track_id, db))
         .map_err(|err| err.to_string())?;
 
-    let resolved = resolve_lrclib_lyrics_payload(lrclib_response)?;
+    let config = app_handle
+        .db(|db: &Connection| db::get_config(db))
+        .map_err(|err| err.to_string())?;
+
+    let lrclib_response = lrclib::get_by_id::request_raw(
+        lrclib_id,
+        &config.lrclib_instance,
+        RetryPolicy::Interactive,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let resolved = resolve_lrclib_lyrics_payload(lrclib_response.into())?;
 
     // Build lyricsfile content from the resolved response
     let lyricsfile_content = if let Some(ref provided) = resolved.provided_lyricsfile {
@@ -1333,6 +1416,7 @@ async fn retrieve_lyrics(
         &artist_name,
         duration,
         &config.lrclib_instance,
+        RetryPolicy::Interactive,
     )
     .await
     .map_err(|err| err.to_string())?;
@@ -1349,9 +1433,10 @@ async fn retrieve_lyrics_by_id(
         .db(|db: &Connection| db::get_config(db))
         .map_err(|err| err.to_string())?;
 
-    let response = lrclib::get_by_id::request_raw(id, &config.lrclib_instance)
-        .await
-        .map_err(|err| err.to_string())?;
+    let response =
+        lrclib::get_by_id::request_raw(id, &config.lrclib_instance, RetryPolicy::Interactive)
+            .await
+            .map_err(|err| err.to_string())?;
 
     Ok(response)
 }
@@ -1363,7 +1448,7 @@ async fn search_lyrics(
     artist_name: String,
     q: String,
     app_handle: AppHandle,
-) -> Result<lrclib::search::Response, String> {
+) -> Result<Vec<lrclib::search::TrackSummary>, String> {
     let config = app_handle
         .db(|db: &Connection| db::get_config(db))
         .map_err(|err| err.to_string())?;
@@ -1423,9 +1508,10 @@ async fn prepare_lrclib_lyricsfile(
     }
 
     // Fetch from LRCLIB API
-    let lrclib_response = lrclib::get_by_id::request_raw(lrclib_id, &lrclib_instance)
-        .await
-        .map_err(|err| err.to_string())?;
+    let lrclib_response =
+        lrclib::get_by_id::request_raw(lrclib_id, &lrclib_instance, RetryPolicy::Interactive)
+            .await
+            .map_err(|err| err.to_string())?;
 
     // Extract metadata from LRCLIB response
     let title = lrclib_response.name.unwrap_or_default();
@@ -1491,9 +1577,10 @@ async fn refresh_lrclib_lyricsfile(
     let lrclib_instance = config.lrclib_instance;
 
     // Fetch fresh data from LRCLIB API (always re-download)
-    let lrclib_response = lrclib::get_by_id::request_raw(lrclib_id, &lrclib_instance)
-        .await
-        .map_err(|err| err.to_string())?;
+    let lrclib_response =
+        lrclib::get_by_id::request_raw(lrclib_id, &lrclib_instance, RetryPolicy::Interactive)
+            .await
+            .map_err(|err| err.to_string())?;
 
     // Extract metadata from LRCLIB response
     let title = lrclib_response.name.unwrap_or_default();
@@ -1641,46 +1728,70 @@ async fn publish_lyrics(
         solve_challenge: "Pending".to_owned(),
         publish_lyrics: "Pending".to_owned(),
     };
-    progress.request_challenge = "In Progress".to_owned();
-    app_handle
-        .emit("publish-lyrics-progress", &progress)
-        .unwrap();
-    let challenge_response = lrclib::request_challenge::request(&config.lrclib_instance)
+
+    for attempt in 1..=MAX_WRITE_ATTEMPTS {
+        progress.request_challenge = "In Progress".to_owned();
+        progress.solve_challenge = "Pending".to_owned();
+        progress.publish_lyrics = "Pending".to_owned();
+        app_handle
+            .emit("publish-lyrics-progress", &progress)
+            .unwrap();
+
+        let challenge_response = lrclib::request_challenge::request(&config.lrclib_instance)
+            .await
+            .map_err(|err| err.to_string())?;
+        progress.request_challenge = "Done".to_owned();
+        progress.solve_challenge = "In Progress".to_owned();
+        app_handle
+            .emit("publish-lyrics-progress", &progress)
+            .unwrap();
+
+        let nonce = lrclib::challenge_solver::solve_challenge(
+            &challenge_response.prefix,
+            &challenge_response.target,
+        );
+        progress.solve_challenge = "Done".to_owned();
+        progress.publish_lyrics = "In Progress".to_owned();
+        app_handle
+            .emit("publish-lyrics-progress", &progress)
+            .unwrap();
+
+        let publish_token = format!("{}:{}", challenge_response.prefix, nonce);
+        match lrclib::publish::request(
+            &title,
+            &album_name,
+            &artist_name,
+            duration,
+            plain_lyrics.as_deref(),
+            synced_lyrics.as_deref(),
+            lyricsfile.as_deref(),
+            &publish_token,
+            &config.lrclib_instance,
+        )
         .await
-        .map_err(|err| err.to_string())?;
-    progress.request_challenge = "Done".to_owned();
-    progress.solve_challenge = "In Progress".to_owned();
-    app_handle
-        .emit("publish-lyrics-progress", &progress)
-        .unwrap();
-    let nonce = lrclib::challenge_solver::solve_challenge(
-        &challenge_response.prefix,
-        &challenge_response.target,
-    );
-    progress.solve_challenge = "Done".to_owned();
-    progress.publish_lyrics = "In Progress".to_owned();
-    app_handle
-        .emit("publish-lyrics-progress", &progress)
-        .unwrap();
-    let publish_token = format!("{}:{}", challenge_response.prefix, nonce);
-    lrclib::publish::request(
-        &title,
-        &album_name,
-        &artist_name,
-        duration,
-        plain_lyrics.as_deref(),
-        synced_lyrics.as_deref(),
-        lyricsfile.as_deref(),
-        &publish_token,
-        &config.lrclib_instance,
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    progress.publish_lyrics = "Done".to_owned();
-    app_handle
-        .emit("publish-lyrics-progress", &progress)
-        .unwrap();
-    Ok(())
+        {
+            Ok(()) => {
+                progress.publish_lyrics = "Done".to_owned();
+                app_handle
+                    .emit("publish-lyrics-progress", &progress)
+                    .unwrap();
+                return Ok(());
+            }
+            Err(error) if attempt < MAX_WRITE_ATTEMPTS && error.is_retryable_write() => {
+                progress.publish_lyrics = "Retrying...".to_owned();
+                app_handle
+                    .emit("publish-lyrics-progress", &progress)
+                    .unwrap();
+
+                if !lrclib::client::wait_for_write_retry(&error, MAX_WRITE_RETRY_WAIT).await {
+                    return Err(error.to_string());
+                }
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err("Publishing failed after multiple attempts".to_owned())
 }
 
 #[tauri::command]
@@ -1698,33 +1809,55 @@ async fn flag_lyrics(
         solve_challenge: "Pending".to_owned(),
         flag_lyrics: "Pending".to_owned(),
     };
-    progress.request_challenge = "In Progress".to_owned();
-    app_handle.emit("flag-lyrics-progress", &progress).unwrap();
-    let challenge_response = lrclib::request_challenge::request(&config.lrclib_instance)
+
+    for attempt in 1..=MAX_WRITE_ATTEMPTS {
+        progress.request_challenge = "In Progress".to_owned();
+        progress.solve_challenge = "Pending".to_owned();
+        progress.flag_lyrics = "Pending".to_owned();
+        app_handle.emit("flag-lyrics-progress", &progress).unwrap();
+
+        let challenge_response = lrclib::request_challenge::request(&config.lrclib_instance)
+            .await
+            .map_err(|err| err.to_string())?;
+        progress.request_challenge = "Done".to_owned();
+        progress.solve_challenge = "In Progress".to_owned();
+        app_handle.emit("flag-lyrics-progress", &progress).unwrap();
+
+        let nonce = lrclib::challenge_solver::solve_challenge(
+            &challenge_response.prefix,
+            &challenge_response.target,
+        );
+        progress.solve_challenge = "Done".to_owned();
+        progress.flag_lyrics = "In Progress".to_owned();
+        app_handle.emit("flag-lyrics-progress", &progress).unwrap();
+
+        let publish_token = format!("{}:{}", challenge_response.prefix, nonce);
+        match lrclib::flag::request(
+            track_id,
+            &flag_reason,
+            &publish_token,
+            &config.lrclib_instance,
+        )
         .await
-        .map_err(|err| err.to_string())?;
-    progress.request_challenge = "Done".to_owned();
-    progress.solve_challenge = "In Progress".to_owned();
-    app_handle.emit("flag-lyrics-progress", &progress).unwrap();
-    let nonce = lrclib::challenge_solver::solve_challenge(
-        &challenge_response.prefix,
-        &challenge_response.target,
-    );
-    progress.solve_challenge = "Done".to_owned();
-    progress.flag_lyrics = "In Progress".to_owned();
-    app_handle.emit("flag-lyrics-progress", &progress).unwrap();
-    let publish_token = format!("{}:{}", challenge_response.prefix, nonce);
-    lrclib::flag::request(
-        track_id,
-        &flag_reason,
-        &publish_token,
-        &config.lrclib_instance,
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    progress.flag_lyrics = "Done".to_owned();
-    app_handle.emit("flag-lyrics-progress", &progress).unwrap();
-    Ok(())
+        {
+            Ok(()) => {
+                progress.flag_lyrics = "Done".to_owned();
+                app_handle.emit("flag-lyrics-progress", &progress).unwrap();
+                return Ok(());
+            }
+            Err(error) if attempt < MAX_WRITE_ATTEMPTS && error.is_retryable_write() => {
+                progress.flag_lyrics = "Retrying...".to_owned();
+                app_handle.emit("flag-lyrics-progress", &progress).unwrap();
+
+                if !lrclib::client::wait_for_write_retry(&error, MAX_WRITE_RETRY_WAIT).await {
+                    return Err(error.to_string());
+                }
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err("Flagging failed after multiple attempts".to_owned())
 }
 
 #[tauri::command]
