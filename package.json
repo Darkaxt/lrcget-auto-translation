@@ -36,6 +36,9 @@
     "vue-toastification": "^2.0.0-rc.5",
     "yaml": "^2.8.3"
   },
+  "overrides": {
+    "minimatch": "^11.0.5"
+  },
   "devDependencies": {
     "@iconify-json/mdi": "^1.2.3",
     "@tauri-apps/cli": "^2.11.2",
